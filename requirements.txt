@@ -5,3 +5,4 @@ numpy
 ta
 vnstock
 requests
+yfinance

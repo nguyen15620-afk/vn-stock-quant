@@ -19,6 +19,12 @@ except ImportError:
     except ImportError:
         pass
 
+try:
+    import yfinance as yf
+    HAS_YF = True
+except ImportError:
+    HAS_YF = False
+
 @st.cache_data(ttl=3600)  # Cache data for 1 hour to prevent spamming the API
 def load_historical_data(symbol: str, months: int = 12) -> pd.DataFrame:
     """
@@ -60,6 +66,30 @@ def load_historical_data(symbol: str, months: int = 12) -> pd.DataFrame:
             except Exception as e:
                 last_error = str(e)
                 continue # Try next source
+                
+        # If vnstock completely fails, fallback to yfinance
+        if (df is None or df.empty) and HAS_YF:
+            try:
+                yf_symbol = "^VNINDEX" if symbol_upper == "VNINDEX" else f"{symbol_upper}.VN"
+                ticker = yf.Ticker(yf_symbol)
+                # For yfinance, we use string formats
+                temp_df = ticker.history(start=start_str, end=end_str)
+                
+                if temp_df is not None and not temp_df.empty:
+                    # yfinance returns index as Date/Datetime, we need to reset it
+                    temp_df = temp_df.reset_index()
+                    # Rename columns to match what vnstock provides
+                    temp_df.rename(columns={
+                        'Date': 'time', 'Datetime': 'time',
+                        'Open': 'open', 'High': 'high', 'Low': 'low', 
+                        'Close': 'close', 'Volume': 'volume'
+                    }, inplace=True)
+                    # Convert timezone aware to timezone naive for Streamlit compatibility if needed
+                    if temp_df['time'].dt.tz is not None:
+                        temp_df['time'] = temp_df['time'].dt.tz_localize(None)
+                    df = temp_df
+            except Exception as e:
+                last_error = f"{last_error} | yfinance error: {str(e)}"
                 
         if df is None or df.empty:
             st.error(f"Không thể lấy dữ liệu cho {symbol} từ tất cả các nguồn. Lỗi cuối cùng: {last_error}")
