@@ -34,20 +34,35 @@ def load_historical_data(symbol: str, months: int = 12) -> pd.DataFrame:
     try:
         symbol_upper = symbol.upper()
         
-        if USE_NEW_API:
-            # New API as per vnstock 4.0 migration guide
-            q = Quote(symbol=symbol_upper, source='VCI')
-            df = q.history(start=start_str, end=end_str)
-        else:
-            # Fallback for old API
-            if symbol_upper == 'VNINDEX':
-                stock = Vnstock().stock(symbol='VNINDEX', source='VCI')
-            else:
-                stock = Vnstock().stock(symbol=symbol_upper, source='VCI')
-            df = stock.quote.history(start=start_str, end=end_str)
+        # Streamlit Cloud runs on foreign IPs, which often get blocked by Vietnamese brokers (like VCI).
+        # We will try multiple sources until one succeeds.
+        sources = ['TCBS', 'SSI', 'VND', 'VCI']
+        df = None
+        last_error = None
         
+        for source in sources:
+            try:
+                if USE_NEW_API:
+                    # New API as per vnstock 4.0 migration guide
+                    q = Quote(symbol=symbol_upper, source=source)
+                    temp_df = q.history(start=start_str, end=end_str)
+                else:
+                    # Fallback for old API
+                    if symbol_upper == 'VNINDEX':
+                        stock = Vnstock().stock(symbol='VNINDEX', source=source)
+                    else:
+                        stock = Vnstock().stock(symbol=symbol_upper, source=source)
+                    temp_df = stock.quote.history(start=start_str, end=end_str)
+                
+                if temp_df is not None and not temp_df.empty:
+                    df = temp_df
+                    break  # Success!
+            except Exception as e:
+                last_error = str(e)
+                continue # Try next source
+                
         if df is None or df.empty:
-            st.error(f"No data returned for {symbol}")
+            st.error(f"Không thể lấy dữ liệu cho {symbol} từ tất cả các nguồn. Lỗi cuối cùng: {last_error}")
             return pd.DataFrame()
             
         # Depending on the vnstock version and source, columns might vary.
