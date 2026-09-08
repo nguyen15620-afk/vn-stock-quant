@@ -35,7 +35,9 @@ def load_historical_data(symbol: str, months: int = 12) -> pd.DataFrame:
     start_date = end_date - timedelta(days=30 * months)
     
     start_str = start_date.strftime('%Y-%m-%d')
-    end_str = end_date.strftime('%Y-%m-%d')
+    # API endpoints (like yfinance) often use exclusive end dates. Add 1 day to include today.
+    end_date_api = end_date + timedelta(days=1)
+    end_str = end_date_api.strftime('%Y-%m-%d')
     
     try:
         symbol_upper = symbol.upper()
