@@ -22,29 +22,55 @@ VN30 = [
 tab1, tab2, tab3 = st.tabs(["📊 Tổng quan Thị trường", "🔍 Phân tích Chi tiết", "🚀 Quét Tín hiệu (Screener)"])
 
 with tab1:
-    st.header("Thị trường Chung (Mô phỏng bằng VN30 ETF)")
+    st.header("📊 Bảng Điều Khiển: Sức Khỏe Thị Trường")
+    st.write("Đánh giá xu hướng chung của thị trường (dựa trên rổ VN30) để quyết định tỷ trọng giải ngân an toàn.")
+    
     # VNINDEX data is blocked on vnstock Cloud, and not supported on Yahoo Finance.
     # We use the E1VFVN30 ETF as a perfect proxy for the market trend using Yahoo Finance.
-    df_vnindex = load_historical_data("E1VFVN30", months=3, use_yfinance_only=True)
+    df_vnindex = load_historical_data("E1VFVN30", months=6, use_yfinance_only=True)
     if not df_vnindex.empty:
+        df_vnindex = compute_indicators(df_vnindex)
+        df_vnindex = generate_signals(df_vnindex)
+        
         latest_vn = df_vnindex.iloc[-1]
         prev_vn = df_vnindex.iloc[-2] if len(df_vnindex) > 1 else latest_vn
         
-        st.metric("Quỹ VN30 ETF (E1VFVN30)", f"{latest_vn['close']:,.2f}", f"{latest_vn['close'] - prev_vn['close']:,.2f}")
+        # Layout metrics and Market Health
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            st.metric("Quỹ VN30 ETF (Đại diện VNINDEX)", f"{latest_vn['close']:,.0f}", f"{latest_vn['close'] - prev_vn['close']:,.0f}")
+            
+        with col2:
+            # Market condition based on ETF trend
+            score = latest_vn['score']
+            if score >= 75:
+                st.success(f"🟢 **TRẠNG THÁI: UPTREND MẠNH ({score}/100 điểm)**\n\n**Chiến lược:** Thị trường ủng hộ, tự tin giải ngân và ưu tiên nắm giữ cổ phiếu khỏe.")
+            elif score == 50:
+                st.warning(f"🟡 **TRẠNG THÁI: ĐI NGANG / TÍCH LŨY ({score}/100 điểm)**\n\n**Chiến lược:** Thị trường phân hóa, chỉ giao dịch với tỷ trọng nhỏ (30-50%) tại các mã có điểm sức mạnh cao.")
+            else:
+                st.error(f"🔴 **TRẠNG THÁI: DOWNTREND / RỦI RO ({score}/100 điểm)**\n\n**Chiến lược:** Cẩn trọng! Thị trường đang yếu, ưu tiên phòng thủ và cầm tiền mặt (Cash is King).")
         
+        st.markdown("---")
+        
+        # Beautiful Candlestick Chart for Market
         fig_vn = go.Figure()
-        fig_vn.add_trace(go.Scatter(x=df_vnindex['time'], y=df_vnindex['close'], fill='tozeroy', mode='lines', line=dict(color='blue')))
-        fig_vn.update_layout(title="Biểu đồ VN30 ETF (3 Tháng)", height=400, template='plotly_white')
+        fig_vn.add_trace(go.Candlestick(
+            x=df_vnindex['time'], open=df_vnindex['open'], high=df_vnindex['high'], 
+            low=df_vnindex['low'], close=df_vnindex['close'], name="VN30 ETF"
+        ))
+        fig_vn.add_trace(go.Scatter(x=df_vnindex['time'], y=df_vnindex['bb_mid'], line=dict(color='orange', width=2), name="Đường Hỗ trợ/Kháng cự (SMA20)"))
+        
+        fig_vn.update_layout(
+            title="Biểu đồ Nhịp đập Thị trường (6 Tháng) - So sánh giá với Đường SMA20", 
+            height=500, 
+            xaxis_rangeslider_visible=False,
+            margin=dict(l=0, r=0, t=40, b=0)
+        )
+        fig_vn.update_yaxes(autorange=True, fixedrange=False)
+        
         st.plotly_chart(fig_vn, use_container_width=True)
     else:
         st.warning("Đang tải dữ liệu thị trường...")
-        
-    st.markdown("---")
-    st.markdown("""
-    ### 💡 Giới thiệu Hệ thống Quant Trading
-    - **Phân tích Chi tiết**: Nhập mã cổ phiếu bất kỳ để xem biểu đồ kỹ thuật và kết quả Backtest của chiến lược.
-    - **Quét Tín hiệu**: Quét toàn bộ danh mục VN30 hoặc danh mục tự chọn để tìm ra các cổ phiếu khỏe nhất (Điểm Sức Mạnh cao nhất) trong ngày hôm nay.
-    """)
 
 with tab2:
     st.sidebar.header("Cài đặt (Settings)")
