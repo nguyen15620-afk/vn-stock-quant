@@ -22,18 +22,19 @@ VN30 = [
 tab1, tab2, tab3 = st.tabs(["📊 Tổng quan Thị trường", "🔍 Phân tích Chi tiết", "🚀 Quét Tín hiệu (Screener)"])
 
 with tab1:
-    st.header("Thị trường Chung (VNINDEX)")
-    # VNINDEX data is often unavailable on Yahoo Finance, so we must rely on vnstock (use_yfinance_only=False)
-    df_vnindex = load_historical_data("VNINDEX", months=3, use_yfinance_only=False)
+    st.header("Thị trường Chung (Mô phỏng bằng VN30 ETF)")
+    # VNINDEX data is blocked on vnstock Cloud, and not supported on Yahoo Finance.
+    # We use the E1VFVN30 ETF as a perfect proxy for the market trend using Yahoo Finance.
+    df_vnindex = load_historical_data("E1VFVN30", months=3, use_yfinance_only=True)
     if not df_vnindex.empty:
         latest_vn = df_vnindex.iloc[-1]
         prev_vn = df_vnindex.iloc[-2] if len(df_vnindex) > 1 else latest_vn
         
-        st.metric("VNINDEX", f"{latest_vn['close']:,.2f}", f"{latest_vn['close'] - prev_vn['close']:,.2f}")
+        st.metric("Quỹ VN30 ETF (E1VFVN30)", f"{latest_vn['close']:,.2f}", f"{latest_vn['close'] - prev_vn['close']:,.2f}")
         
         fig_vn = go.Figure()
         fig_vn.add_trace(go.Scatter(x=df_vnindex['time'], y=df_vnindex['close'], fill='tozeroy', mode='lines', line=dict(color='blue')))
-        fig_vn.update_layout(title="Biểu đồ VNINDEX (3 Tháng)", height=400, template='plotly_white')
+        fig_vn.update_layout(title="Biểu đồ VN30 ETF (3 Tháng)", height=400, template='plotly_white')
         st.plotly_chart(fig_vn, use_container_width=True)
     else:
         st.warning("Đang tải dữ liệu thị trường...")
