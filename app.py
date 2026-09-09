@@ -19,9 +19,32 @@ VN30 = [
     "TPB", "VCB", "VHM", "VIB", "VIC", "VJC", "VNM", "VPB", "VRE", "SSI"
 ]
 
-tab1, tab2 = st.tabs(["🔍 Phân tích Chi tiết", "🚀 Quét Tín hiệu Toàn thị trường (Screener)"])
+tab1, tab2, tab3 = st.tabs(["📊 Tổng quan Thị trường", "🔍 Phân tích Chi tiết", "🚀 Quét Tín hiệu (Screener)"])
 
 with tab1:
+    st.header("Thị trường Chung (VNINDEX)")
+    df_vnindex = load_historical_data("VNINDEX", months=3, use_yfinance_only=True)
+    if not df_vnindex.empty:
+        latest_vn = df_vnindex.iloc[-1]
+        prev_vn = df_vnindex.iloc[-2] if len(df_vnindex) > 1 else latest_vn
+        
+        st.metric("VNINDEX", f"{latest_vn['close']:,.2f}", f"{latest_vn['close'] - prev_vn['close']:,.2f}")
+        
+        fig_vn = go.Figure()
+        fig_vn.add_trace(go.Scatter(x=df_vnindex['time'], y=df_vnindex['close'], fill='tozeroy', mode='lines', line=dict(color='blue')))
+        fig_vn.update_layout(title="Biểu đồ VNINDEX (3 Tháng)", height=400, template='plotly_white')
+        st.plotly_chart(fig_vn, use_container_width=True)
+    else:
+        st.warning("Đang tải dữ liệu thị trường...")
+        
+    st.markdown("---")
+    st.markdown("""
+    ### 💡 Giới thiệu Hệ thống Quant Trading
+    - **Phân tích Chi tiết**: Nhập mã cổ phiếu bất kỳ để xem biểu đồ kỹ thuật và kết quả Backtest của chiến lược.
+    - **Quét Tín hiệu**: Quét toàn bộ danh mục VN30 hoặc danh mục tự chọn để tìm ra các cổ phiếu khỏe nhất (Điểm Sức Mạnh cao nhất) trong ngày hôm nay.
+    """)
+
+with tab2:
     st.sidebar.header("Cài đặt (Settings)")
     ticker = st.sidebar.text_input("Mã cổ phiếu (Ticker / VNINDEX)", value="FPT").upper()
     months = st.sidebar.slider("Dữ liệu lịch sử (Tháng)", min_value=3, max_value=24, value=6, step=1)
@@ -131,9 +154,18 @@ with tab1:
                     
             st.success("Hoàn thành!")
 
-with tab2:
-    st.subheader("🚀 Bộ quét tín hiệu nhóm VN30")
-    st.write("Hệ thống sẽ tải dữ liệu và kiểm tra các điều kiện Mua/Bán cho toàn bộ 30 mã cổ phiếu lớn nhất thị trường. Việc này có thể mất 10-30 giây.")
+with tab3:
+    st.subheader("🚀 Bộ quét tín hiệu Cổ phiếu")
+    
+    scan_mode = st.radio("Phạm vi quét:", ["Rổ VN30", "Danh mục cá nhân (Watchlist)"], horizontal=True)
+    
+    if scan_mode == "Danh mục cá nhân (Watchlist)":
+        custom_tickers_input = st.text_input("Nhập các mã cổ phiếu cách nhau bằng dấu phẩy (VD: SSI, VND, HPG, FPT):", value="SSI, VND, HPG")
+        tickers_to_scan = [t.strip().upper() for t in custom_tickers_input.split(",") if t.strip()]
+    else:
+        tickers_to_scan = VN30
+
+    st.write(f"Hệ thống sẽ tải dữ liệu và kiểm tra các điều kiện Mua/Bán cho toàn bộ {len(tickers_to_scan)} mã cổ phiếu. Việc này có thể mất 10-30 giây.")
     
     use_yf = st.checkbox("⚡ Chế độ Quét Nhanh (Sử dụng dữ liệu Yahoo Finance - Rất khuyên dùng trên Cloud)", value=True)
     
@@ -143,8 +175,8 @@ with tab2:
         
         results = []
         
-        for i, sym in enumerate(VN30):
-            status_text.text(f"Đang quét {sym} ({i+1}/{len(VN30)})...")
+        for i, sym in enumerate(tickers_to_scan):
+            status_text.text(f"Đang quét {sym} ({i+1}/{len(tickers_to_scan)})...")
             
             # Use 4 months to calculate long indicators like Ichimoku 52 safely
             df_scan = load_historical_data(sym, months=4, use_yfinance_only=use_yf) 
@@ -164,7 +196,7 @@ with tab2:
                     "Giá Close": f"{latest_scan['close']:,.0f}"
                 })
                 
-            progress_bar.progress((i + 1) / len(VN30))
+            progress_bar.progress((i + 1) / len(tickers_to_scan))
             
         status_text.text("Đã quét xong!")
         
