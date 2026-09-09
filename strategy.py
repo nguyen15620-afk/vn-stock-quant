@@ -46,14 +46,15 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['stoch_rsi_k'] = df['stoch_rsi'].rolling(window=3).mean()
     df['stoch_rsi_d'] = df['stoch_rsi_k'].rolling(window=3).mean()
 
-    # 6. Volume + SMA Volume 9
+    # 6. Volume + SMA Volume 20 (for Strategy 1)
     df['vol_sma9'] = df['volume'].rolling(window=9).mean()
+    df['vol_sma20'] = df['volume'].rolling(window=20).mean()
     
     return df
 
 def generate_signals(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Applies the custom Buy/Sell/Hold rule engine.
+    Applies the Strategy 1: Trend Following logic.
     """
     df = df.copy()
     
@@ -61,67 +62,42 @@ def generate_signals(df: pd.DataFrame) -> pd.DataFrame:
     df['signal'] = 'Hold'
     df['reason'] = ''
 
-    # Ensure we have enough data (shift requires previous rows)
+    # Ensure we have enough data
     if len(df) < 2:
         return df
 
-    # Helper conditions
-    # Price > middle BB
+    # --- BUY CONDITIONS ---
+    # 1. Giá > SMA20 (BB Mid)
     cond_price_above_bb = df['close'] > df['bb_mid']
-    cond_price_below_bb = df['close'] < df['bb_mid']
-    
-    # RSI > 50 đang tăng (RSI current > 50 AND RSI current > RSI previous)
-    cond_rsi_above_50 = df['rsi'] > 50
-    cond_rsi_rising = df['rsi'] > df['rsi'].shift(1)
-    cond_rsi_buy = cond_rsi_above_50 & cond_rsi_rising
-    
-    # RSI < 50
-    cond_rsi_below_50 = df['rsi'] < 50
-    
-    # MACD hist > 0 / < 0
+    # 2. MACD Hist > 0
     cond_macd_hist_pos = df['macd_hist'] > 0
-    cond_macd_hist_neg = df['macd_hist'] < 0
-    
-    # StochRSI cắt lên từ dưới 20 
-    # Current K > D (or current K > 20 and previous K < 20) -> typically crossover means K crosses D.
-    # The prompt says: "StochRSI cắt lên từ dưới 20" -> Previous K < 20 and Current K > Previous K, or K crosses D below 20.
-    # Let's interpret as K crosses D below 20, or K crosses above 20. 
-    # I'll implement: Previous K < 20 AND Current K crosses above Current D
-    prev_k = df['stoch_rsi_k'].shift(1)
-    prev_d = df['stoch_rsi_d'].shift(1)
-    curr_k = df['stoch_rsi_k']
-    curr_d = df['stoch_rsi_d']
-    
-    # K crosses above D, while happening below 20
-    cond_stoch_cross_up = (prev_k <= prev_d) & (curr_k > curr_d) & (curr_k < 20)
-    
-    # StochRSI cắt xuống từ trên 80
-    cond_stoch_cross_down = (prev_k >= prev_d) & (curr_k < curr_d) & (curr_k > 80)
-    
-    # Volume > SMA9
-    cond_vol_above_sma = df['volume'] > df['vol_sma9']
+    # 3. Volume > SMA20
+    cond_vol_above_sma20 = df['volume'] > df['vol_sma20']
+    # 4. RSI > 50
+    cond_rsi_above_50 = df['rsi'] > 50
 
-    # BUY Logic
     buy_mask = (
         cond_price_above_bb & 
-        cond_rsi_buy & 
         cond_macd_hist_pos & 
-        cond_stoch_cross_up & 
-        cond_vol_above_sma
+        cond_vol_above_sma20 & 
+        cond_rsi_above_50
     )
     
-    # SELL Logic
+    # --- SELL CONDITIONS ---
+    # 1. Giá < SMA20 (BB Mid)
+    cond_price_below_bb = df['close'] < df['bb_mid']
+    # 2. MACD Hist < 0
+    cond_macd_hist_neg = df['macd_hist'] < 0
+
     sell_mask = (
-        cond_price_below_bb & 
-        cond_rsi_below_50 & 
-        cond_macd_hist_neg & 
-        cond_stoch_cross_down
+        cond_price_below_bb | 
+        cond_macd_hist_neg
     )
 
     df.loc[buy_mask, 'signal'] = 'Buy'
-    df.loc[buy_mask, 'reason'] = 'Giá > BB_mid, RSI > 50 & Tăng, MACD_hist > 0, StochRSI cắt lên < 20, Vol > SMA9'
+    df.loc[buy_mask, 'reason'] = 'Giá > SMA20, MACD_hist > 0, RSI > 50, Vol > SMA20'
     
     df.loc[sell_mask, 'signal'] = 'Sell'
-    df.loc[sell_mask, 'reason'] = 'Giá < BB_mid, RSI < 50, MACD_hist < 0, StochRSI cắt xuống > 80'
+    df.loc[sell_mask, 'reason'] = 'Giá thủng SMA20 HOẶC MACD_hist < 0'
 
     return df
