@@ -76,9 +76,15 @@ def run_backtest(df: pd.DataFrame, initial_capital: float = 100000000.0) -> dict
     if completed_trades > 0:
         win_rate = (wins / completed_trades) * 100
         
+    # Calculate Max Drawdown
+    df['rolling_max'] = df['portfolio_value'].cummax()
+    df['drawdown'] = (df['portfolio_value'] - df['rolling_max']) / df['rolling_max']
+    max_drawdown = df['drawdown'].min() * 100
+        
     return {
         'total_return_pct': total_return * 100,
         'market_return_pct': market_return * 100,
+        'max_drawdown_pct': max_drawdown,
         'total_trades': completed_trades,
         'win_rate_pct': win_rate,
         'df_backtest': df

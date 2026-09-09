@@ -183,13 +183,30 @@ with tab2:
                 
                 # 7. Backtest Results
                 st.markdown("---")
-                st.subheader("🔍 Kết quả Backtest")
+                st.subheader("🔍 Kết quả Backtest & Hiệu quả Đầu tư")
                 
-                col_b1, col_b2, col_b3, col_b4 = st.columns(4)
+                col_b1, col_b2, col_b3, col_b4, col_b5 = st.columns(5)
                 col_b1.metric("Lợi nhuận Chiến lược", f"{bt_results['total_return_pct']:.2f}%")
                 col_b2.metric("Lợi nhuận Mua & Giữ", f"{bt_results['market_return_pct']:.2f}%")
-                col_b3.metric("Số lệnh đã đóng", f"{bt_results['total_trades']}")
-                col_b4.metric("Tỷ lệ Thắng (Win rate)", f"{bt_results['win_rate_pct']:.1f}%")
+                col_b3.metric("Max Drawdown (Sụt giảm)", f"{bt_results['max_drawdown_pct']:.2f}%")
+                col_b4.metric("Số lệnh đã đóng", f"{bt_results['total_trades']}")
+                col_b5.metric("Tỷ lệ Thắng (Win rate)", f"{bt_results['win_rate_pct']:.1f}%")
+                
+                # Equity Curve
+                df_bt = bt_results['df_backtest']
+                fig_eq = go.Figure()
+                fig_eq.add_trace(go.Scatter(x=df_bt['time'], y=df_bt['portfolio_value'], mode='lines', name='Chiến lược Quant', line=dict(color='green', width=2)))
+                fig_eq.add_trace(go.Scatter(x=df_bt['time'], y=df_bt['market_portfolio_value'], mode='lines', name='Mua & Giữ (Buy & Hold)', line=dict(color='gray', dash='dash')))
+                
+                fig_eq.update_layout(
+                    title="Đường cong Vốn (Equity Curve) - Khởi điểm 100 triệu VNĐ",
+                    yaxis_title="Giá trị Tài khoản (VNĐ)",
+                    height=400,
+                    template='plotly_dark',
+                    hovermode="x unified",
+                    margin=dict(l=0, r=0, t=40, b=0)
+                )
+                st.plotly_chart(fig_eq, use_container_width=True)
                 
                 with st.expander("Dữ liệu Lịch sử & Tín hiệu"):
                     st.dataframe(df[['time', 'close', 'signal', 'reason', 'rsi', 'macd_hist', 'stoch_rsi_k', 'volume']].tail(50))
