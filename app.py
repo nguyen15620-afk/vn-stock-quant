@@ -315,3 +315,4 @@ with tab3:
             st.markdown("**Ghi chú Tín hiệu hôm nay:** Chỉ báo 'Buy' hoặc 'Sell' xuất hiện khi cổ phiếu có điểm bứt phá hoặc gãy nền trong đúng phiên hôm nay.")
         else:
             st.warning("Không có dữ liệu trả về trong quá trình quét.")
+# Force Streamlit reload
