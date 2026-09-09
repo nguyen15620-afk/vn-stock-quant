@@ -81,7 +81,15 @@ with tab2:
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("🧪 Tùy chỉnh Backtest")
-    strategy_type = st.sidebar.selectbox("Chiến lược", options=["trend", "mean_reversion", "momentum"], format_func=lambda x: {"trend": "Xu hướng (Trend Following)", "mean_reversion": "Bắt đáy (RSI Oversold)", "momentum": "Động lượng (EMA Crossover)"}[x])
+    strategy_options = ["trend", "turtle", "ichimoku", "mean_reversion", "momentum"]
+    strategy_labels = {
+        "trend": "Xu hướng (MACD + RSI + BB)", 
+        "turtle": "Turtle Trading (Đột phá 20 ngày)", 
+        "ichimoku": "Ichimoku (Phá Mây Kumo)", 
+        "mean_reversion": "Bắt đáy (RSI Oversold)", 
+        "momentum": "Động lượng (EMA Crossover)"
+    }
+    strategy_type = st.sidebar.selectbox("Chiến lược", options=strategy_options, format_func=lambda x: strategy_labels[x])
     take_profit = st.sidebar.number_input("Chốt lời (%) - Nhập 0 để tắt", min_value=0.0, max_value=100.0, value=15.0, step=1.0) / 100.0
     stop_loss = st.sidebar.number_input("Cắt lỗ (%) - Nhập 0 để tắt", min_value=0.0, max_value=100.0, value=7.0, step=1.0) / 100.0
 

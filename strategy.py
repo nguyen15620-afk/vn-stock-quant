@@ -55,12 +55,16 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     adx = ta.trend.ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14)
     df['adx'] = adx.adx()
     
+    # 9. Donchian Channels (For Turtle Trading)
+    df['roll_high_20'] = df['high'].rolling(window=20).max()
+    df['roll_low_10'] = df['low'].rolling(window=10).min()
+    
     return df
 
 def generate_signals(df: pd.DataFrame, strategy_type: str = 'trend') -> pd.DataFrame:
     """
     Generates Buy/Sell/Hold signals based on the selected strategy.
-    Strategies: 'trend' (Breakout/Trend Following), 'momentum' (Fast EMA), 'mean_reversion' (Bottom Fishing).
+    Strategies: 'trend' (Breakout/Trend Following), 'momentum' (Fast EMA), 'mean_reversion' (Bottom Fishing), 'turtle' (Turtle Trading), 'ichimoku' (Cloud Breakout).
     """
     df = df.copy()
     
@@ -117,16 +121,46 @@ def generate_signals(df: pd.DataFrame, strategy_type: str = 'trend') -> pd.DataF
         df['score'] = np.where(df['rsi'] < 30, 100, np.where(df['rsi'] > 70, 0, 50))
         df['trend_status'] = np.where(df['rsi'] < 30, 'Quá bán (Hấp dẫn)', np.where(df['rsi'] > 70, 'Quá mua (Rủi ro)', 'Trung lập'))
         
-        # Mua khi RSI cắt xuống 30 HOẶC giá chạm dải dưới BB
         buy_mask = ((df['rsi'] < 30) & (df['rsi'].shift(1) >= 30)) | ((df['close'] < df['bb_low']) & (prev_close >= df['bb_low'].shift(1)))
-        
-        # Bán khi RSI cắt lên 70 HOẶC hồi về chạm đường giữa BB (Chốt lời ngắn hạn)
         sell_mask = ((df['rsi'] > 70) & (df['rsi'].shift(1) <= 70)) | ((df['close'] > df['bb_mid']) & (prev_close <= prev_bb_mid))
         
         df.loc[buy_mask, 'signal'] = 'Buy'
         df.loc[buy_mask, 'reason'] = 'Bắt đáy! Cổ phiếu rơi vào vùng Quá bán.'
         df.loc[sell_mask, 'signal'] = 'Sell'
         df.loc[sell_mask, 'reason'] = 'Chốt lời/Cắt lỗ! Chạm ngưỡng cản hoặc Quá mua.'
+
+    # --- Strategy: Turtle Trading (Đột phá đỉnh 20 ngày) ---
+    elif strategy_type == 'turtle':
+        df['score'] = np.where(df['close'] >= df['roll_high_20'].shift(1), 100, np.where(df['close'] <= df['roll_low_10'].shift(1), 0, 50))
+        df['trend_status'] = np.where(df['score'] == 100, 'Tích cực (Vượt đỉnh)', np.where(df['score'] == 0, 'Tiêu cực (Thủng đáy)', 'Trung lập'))
+        
+        buy_mask = (df['close'] > df['roll_high_20'].shift(1)) & (prev_close <= df['roll_high_20'].shift(2))
+        sell_mask = (df['close'] < df['roll_low_10'].shift(1)) & (prev_close >= df['roll_low_10'].shift(2))
+        
+        df.loc[buy_mask, 'signal'] = 'Buy'
+        df.loc[buy_mask, 'reason'] = 'Turtle: Phá đỉnh 20 ngày'
+        df.loc[sell_mask, 'signal'] = 'Sell'
+        df.loc[sell_mask, 'reason'] = 'Turtle: Thủng đáy 10 ngày'
+
+    # --- Strategy: Ichimoku Kumo Breakout ---
+    elif strategy_type == 'ichimoku':
+        # Xác định mây
+        cloud_top = np.maximum(df['ichi_senkou_a'], df['ichi_senkou_b'])
+        cloud_bottom = np.minimum(df['ichi_senkou_a'], df['ichi_senkou_b'])
+        
+        df['score'] = np.where(df['close'] > cloud_top, 100, np.where(df['close'] < cloud_bottom, 0, 50))
+        df['trend_status'] = np.where(df['score'] == 100, 'Tích cực (Trên Mây)', np.where(df['score'] == 0, 'Tiêu cực (Dưới Mây)', 'Trung lập (Trong Mây)'))
+        
+        prev_cloud_top = cloud_top.shift(1)
+        prev_cloud_bottom = cloud_bottom.shift(1)
+        
+        buy_mask = (df['close'] > cloud_top) & (prev_close <= prev_cloud_top)
+        sell_mask = (df['close'] < cloud_bottom) & (prev_close >= prev_cloud_bottom)
+        
+        df.loc[buy_mask, 'signal'] = 'Buy'
+        df.loc[buy_mask, 'reason'] = 'Ichimoku: Giá đâm xuyên Mây đi lên'
+        df.loc[sell_mask, 'signal'] = 'Sell'
+        df.loc[sell_mask, 'reason'] = 'Ichimoku: Giá rớt khỏi Mây Kumo'
 
     # Fallback for 'Hold' reason
     hold_mask = (df['signal'] == 'Hold')
