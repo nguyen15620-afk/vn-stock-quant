@@ -3,8 +3,9 @@ import pandas as pd
 import time
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from datetime import datetime, timedelta
 
-from data_loader import load_historical_data
+from data_loader import load_historical_data, load_fundamentals
 from strategy import compute_indicators, generate_signals
 from backtester import run_backtest
 
@@ -76,15 +77,28 @@ with tab2:
     st.sidebar.header("Cài đặt (Settings)")
     ticker = st.sidebar.text_input("Mã cổ phiếu (Ticker / VNINDEX)", value="FPT").upper()
     months = st.sidebar.slider("Dữ liệu lịch sử (Tháng)", min_value=3, max_value=24, value=6, step=1)
+    interval = st.sidebar.selectbox("Khung thời gian", options=["1d", "1wk", "1h"], format_func=lambda x: {"1d": "Ngày (Daily)", "1wk": "Tuần (Weekly)", "1h": "Giờ (Hourly)"}[x])
 
     if st.button("Phân tích chi tiết"):
         with st.spinner("Đang tải dữ liệu và tính toán..."):
             # 1. Load Data
-            df = load_historical_data(ticker, months=months)
+            df = load_historical_data(ticker, months=months, interval=interval)
             
             if df.empty:
                 st.error(f"Không thể tải dữ liệu cho mã {ticker}.")
             else:
+                st.subheader(f"📈 Phân tích Kỹ thuật & Cơ bản: {ticker}")
+                
+                # Load Fundamentals (FA)
+                fa_data = load_fundamentals(ticker)
+                if fa_data:
+                    with st.expander("📊 Chỉ số Cơ bản (FA) - Nguồn: Yahoo Finance", expanded=True):
+                        fa1, fa2, fa3, fa4 = st.columns(4)
+                        fa1.metric("P/E (Trailing)", f"{fa_data.get('PE', 0):.2f}" if fa_data.get('PE') else "N/A")
+                        fa2.metric("EPS (VNĐ)", f"{fa_data.get('EPS', 0):,.0f}" if fa_data.get('EPS') else "N/A")
+                        fa3.metric("ROE (%)", f"{fa_data.get('ROE', 0)*100:.2f}%" if fa_data.get('ROE') else "N/A")
+                        fa4.metric("Tăng trưởng DT", f"{fa_data.get('RevenueGrowth', 0)*100:.2f}%" if fa_data.get('RevenueGrowth') else "N/A")
+                
                 # 2. Compute Indicators
                 df = compute_indicators(df)
                 
@@ -195,7 +209,13 @@ with tab3:
 
     st.write(f"Hệ thống sẽ tải dữ liệu và kiểm tra các điều kiện Mua/Bán cho toàn bộ {len(tickers_to_scan)} mã cổ phiếu. Việc này có thể mất 10-30 giây.")
     
-    use_yf = st.checkbox("⚡ Chế độ Quét Nhanh (Sử dụng dữ liệu Yahoo Finance - Rất khuyên dùng trên Cloud)", value=True)
+    col_opt1, col_opt2, col_opt3 = st.columns(3)
+    with col_opt1:
+        scan_interval = st.selectbox("Khung thời gian quét:", options=["1d", "1wk", "1h"], format_func=lambda x: {"1d": "Ngày (Daily)", "1wk": "Tuần (Weekly)", "1h": "Giờ (Hourly)"}[x])
+    with col_opt2:
+        use_yf = st.checkbox("⚡ Quét Nhanh (Yahoo Finance)", value=True)
+    with col_opt3:
+        use_fa_filter = st.checkbox("🛡️ Kết hợp lọc Cơ bản (P/E < 25 & ROE > 10%)", value=False)
     
     if st.button("Bắt đầu Quét", type="primary"):
         progress_bar = st.progress(0)
@@ -206,23 +226,45 @@ with tab3:
         for i, sym in enumerate(tickers_to_scan):
             status_text.text(f"Đang quét {sym} ({i+1}/{len(tickers_to_scan)})...")
             
-            # Use 4 months to calculate long indicators like Ichimoku 52 safely
-            df_scan = load_historical_data(sym, months=4, use_yfinance_only=use_yf) 
-            if not df_scan.empty:
-                df_scan = compute_indicators(df_scan)
-                df_scan = generate_signals(df_scan)
+            passed_fa = True
+            pe_val = "N/A"
+            roe_val = "N/A"
+            if use_fa_filter:
+                fa = load_fundamentals(sym)
+                pe = fa.get("PE")
+                roe = fa.get("ROE")
+                pe_val = round(pe, 1) if pe else "N/A"
+                roe_val = f"{roe*100:.1f}%" if roe else "N/A"
                 
-                latest_scan = df_scan.iloc[-1]
-                
-                results.append({
-                    "Mã CP": sym,
-                    "Điểm (0-100)": int(latest_scan['score']),
-                    "Vị thế hiện tại": latest_scan['trend_status'],
-                    "Tín hiệu hôm nay": latest_scan['signal'],
-                    "Lý do": latest_scan['reason'] if latest_scan['reason'] else "-",
-                    "Ngày": latest_scan['time'].strftime('%Y-%m-%d'),
-                    "Giá Close": f"{latest_scan['close']:,.0f}"
-                })
+                if pe and roe:
+                    if pe >= 25 or pe <= 0 or roe <= 0.1:
+                        passed_fa = False
+                else:
+                    passed_fa = False # Missing data
+            
+            if passed_fa:
+                # Use 4 months to calculate long indicators like Ichimoku 52 safely
+                df_scan = load_historical_data(sym, months=4, use_yfinance_only=use_yf, interval=scan_interval) 
+                if not df_scan.empty:
+                    df_scan = compute_indicators(df_scan)
+                    df_scan = generate_signals(df_scan)
+                    
+                    latest_scan = df_scan.iloc[-1]
+                    
+                    res_dict = {
+                        "Mã CP": sym,
+                        "Điểm (0-100)": int(latest_scan['score']),
+                        "Vị thế hiện tại": latest_scan['trend_status'],
+                        "Tín hiệu hôm nay": latest_scan['signal'],
+                        "Lý do": latest_scan['reason'] if latest_scan['reason'] else "-",
+                        "Ngày": latest_scan['time'].strftime('%Y-%m-%d'),
+                        "Giá Close": f"{latest_scan['close']:,.0f}"
+                    }
+                    if use_fa_filter:
+                        res_dict["P/E"] = pe_val
+                        res_dict["ROE"] = roe_val
+                        
+                    results.append(res_dict)
                 
             progress_bar.progress((i + 1) / len(tickers_to_scan))
             

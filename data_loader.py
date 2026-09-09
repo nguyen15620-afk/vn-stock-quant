@@ -25,11 +25,30 @@ try:
 except ImportError:
     HAS_YF = False
 
+@st.cache_data(ttl=3600)
+def load_fundamentals(symbol: str) -> dict:
+    """
+    Loads fundamental data (P/E, EPS, ROE) for a given symbol using yfinance.
+    """
+    try:
+        if not HAS_YF or symbol.upper() in ['VNINDEX', 'E1VFVN30']:
+            return {}
+        yf_symbol = f"{symbol.upper()}.VN"
+        info = yf.Ticker(yf_symbol).info
+        return {
+            "PE": info.get("trailingPE"),
+            "EPS": info.get("trailingEps"),
+            "ROE": info.get("returnOnEquity"),
+            "RevenueGrowth": info.get("revenueGrowth")
+        }
+    except Exception:
+        return {}
+
 @st.cache_data(ttl=3600)  # Cache data for 1 hour to prevent spamming the API
-def load_historical_data(symbol: str, months: int = 12, use_yfinance_only: bool = False) -> pd.DataFrame:
+def load_historical_data(symbol: str, months: int = 12, use_yfinance_only: bool = False, interval: str = "1d") -> pd.DataFrame:
     """
     Loads historical OHLCV data for a given symbol.
-    Supports stocks and VNINDEX.
+    interval: "1d" (daily), "1wk" (weekly), "1h" (hourly)
     """
     end_date = datetime.now()
     start_date = end_date - timedelta(days=30 * months)
@@ -48,13 +67,21 @@ def load_historical_data(symbol: str, months: int = 12, use_yfinance_only: bool 
         # We will try multiple sources until one succeeds.
         sources = ['TCBS', 'SSI', 'VND', 'VCI']
         
+        # vnstock resolution mapping
+        vns_resolution = '1D'
+        if interval == '1wk':
+            vns_resolution = '1W'
+        elif interval == '1h':
+            vns_resolution = '1H'
+        
         if not use_yfinance_only:
             for source in sources:
                 try:
                     if USE_NEW_API:
                         # New API as per vnstock 4.0 migration guide
                         q = Quote(symbol=symbol_upper, source=source)
-                        temp_df = q.history(start=start_str, end=end_str)
+                        # vnstock 4.0 may not support resolution for all sources
+                        temp_df = q.history(start=start_str, end=end_str, resolution=vns_resolution)
                     else:
                         # Fallback for old API
                         if symbol_upper == 'VNINDEX':
@@ -73,10 +100,15 @@ def load_historical_data(symbol: str, months: int = 12, use_yfinance_only: bool 
         # If vnstock completely fails, fallback to yfinance
         if (df is None or df.empty) and HAS_YF:
             try:
-                yf_symbol = "^VNINDEX" if symbol_upper == "VNINDEX" else f"{symbol_upper}.VN"
+                # E1VFVN30 ETF is our VNINDEX proxy on yfinance
+                if symbol_upper == "E1VFVN30":
+                    yf_symbol = "E1VFVN30.VN"
+                else:
+                    yf_symbol = "^VNINDEX" if symbol_upper == "VNINDEX" else f"{symbol_upper}.VN"
                 ticker = yf.Ticker(yf_symbol)
-                # For yfinance, we use string formats
-                temp_df = ticker.history(start=start_str, end=end_str)
+                
+                # yfinance interval uses the exact same format: 1d, 1wk, 1h
+                temp_df = ticker.history(start=start_str, end=end_str, interval=interval)
                 
                 if temp_df is not None and not temp_df.empty:
                     # yfinance returns index as Date/Datetime, we need to reset it
