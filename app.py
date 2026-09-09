@@ -106,8 +106,9 @@ with tab2:
                 df_vnindex = load_historical_data("VNINDEX", months=fetch_months, interval=interval)
                 if not df_vnindex.empty:
                     df_vnindex['sma50'] = df_vnindex['close'].rolling(50).mean()
-                    # Index by time for alignment
-                    df_vnindex.set_index('time', inplace=True)
+                    # Index by string date for perfect alignment
+                    df_vnindex['date_str'] = df_vnindex['time'].dt.strftime('%Y-%m-%d')
+                    df_vnindex.set_index('date_str', inplace=True)
                     market_regime_series = df_vnindex['close'] > df_vnindex['sma50']
             
             if df.empty:
@@ -125,8 +126,9 @@ with tab2:
                         fa3.metric("ROE (%)", f"{fa_data.get('ROE', 0)*100:.2f}%" if fa_data.get('ROE') else "N/A")
                         fa4.metric("Tăng trưởng DT", f"{fa_data.get('RevenueGrowth', 0)*100:.2f}%" if fa_data.get('RevenueGrowth') else "N/A")
                 
-                # Align df index by time so we can pass aligned regime series
-                df.set_index('time', inplace=True, drop=False)
+                # Align df index by date string so we can pass aligned regime series
+                df['date_str'] = df['time'].dt.strftime('%Y-%m-%d')
+                df.set_index('date_str', inplace=True, drop=False)
                 
                 # 2. Compute Indicators
                 df = compute_indicators(df)
@@ -292,7 +294,8 @@ with tab3:
             df_vnindex = load_historical_data("VNINDEX", months=6, interval=scan_interval)
             if not df_vnindex.empty:
                 df_vnindex['sma50'] = df_vnindex['close'].rolling(50).mean()
-                df_vnindex.set_index('time', inplace=True)
+                df_vnindex['date_str'] = df_vnindex['time'].dt.strftime('%Y-%m-%d')
+                df_vnindex.set_index('date_str', inplace=True)
                 market_regime_series = df_vnindex['close'] > df_vnindex['sma50']
         
         results = []
@@ -320,7 +323,8 @@ with tab3:
                 # Use 6 months to calculate long indicators like Ichimoku 52 safely and SMA50
                 df_scan = load_historical_data(sym, months=6, use_yfinance_only=use_yf, interval=scan_interval) 
                 if not df_scan.empty:
-                    df_scan.set_index('time', inplace=True, drop=False)
+                    df_scan['date_str'] = df_scan['time'].dt.strftime('%Y-%m-%d')
+                    df_scan.set_index('date_str', inplace=True, drop=False)
                     df_scan = compute_indicators(df_scan)
                     df_scan = generate_signals(df_scan, market_regime=market_regime_series)
                     
