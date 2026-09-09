@@ -61,7 +61,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     
     return df
 
-def generate_signals(df: pd.DataFrame, strategy_type: str = 'trend') -> pd.DataFrame:
+def generate_signals(df: pd.DataFrame, strategy_type: str = 'trend', market_regime: pd.Series = None) -> pd.DataFrame:
     """
     Generates Buy/Sell/Hold signals based on the selected strategy.
     Strategies: 'trend' (Breakout/Trend Following), 'momentum' (Fast EMA), 'mean_reversion' (Bottom Fishing), 'turtle' (Turtle Trading), 'ichimoku' (Cloud Breakout).
@@ -162,8 +162,21 @@ def generate_signals(df: pd.DataFrame, strategy_type: str = 'trend') -> pd.DataF
         df.loc[sell_mask, 'signal'] = 'Sell'
         df.loc[sell_mask, 'reason'] = 'Ichimoku: Giá rớt khỏi Mây Kumo'
 
+    # --- Tùy chọn Phòng thủ Thị trường Chung ---
+    if market_regime is not None:
+        # Hủy các lệnh Buy nếu market_regime == False (Thị trường chung xấu)
+        # Giữ nguyên các lệnh Sell vì vẫn cần cắt lỗ/chốt lời
+        blocked_buys = df['signal'] == 'Buy'
+        # market_regime có thể là một Series bool có cùng index, map theo thời gian. 
+        # Cần reindex để khớp với df
+        market_regime_aligned = market_regime.reindex(df.index).fillna(False)
+        
+        # Chỉ giữ Buy khi market_regime_aligned == True
+        df.loc[blocked_buys & (~market_regime_aligned), 'signal'] = 'Hold'
+        df.loc[blocked_buys & (~market_regime_aligned), 'reason'] = 'Tín hiệu MUA bị HỦY do VNINDEX xấu'
+
     # Fallback for 'Hold' reason
-    hold_mask = (df['signal'] == 'Hold')
+    hold_mask = (df['signal'] == 'Hold') & (df['reason'] == '')
     df.loc[hold_mask, 'reason'] = df['trend_status']
 
     return df

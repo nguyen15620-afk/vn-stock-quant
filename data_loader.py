@@ -96,6 +96,32 @@ def load_historical_data(symbol: str, months: int = 12, use_yfinance_only: bool 
                 except Exception as e:
                     last_error = str(e)
                     continue # Try next source
+                    
+        # Reliable fallback for VNINDEX using VNDirect API
+        if (df is None or df.empty) and symbol_upper == 'VNINDEX':
+            import requests
+            import time
+            vnd_res = 'D'
+            if interval == '1wk': vnd_res = 'W'
+            elif interval == '1h': vnd_res = '60'
+            
+            start_ts = int(start_date.timestamp())
+            end_ts = int(end_date_api.timestamp())
+            try:
+                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+                url = f"https://dchart-api.vndirect.com.vn/dchart/history?resolution={vnd_res}&symbol=VNINDEX&from={start_ts}&to={end_ts}"
+                res = requests.get(url, headers=headers).json()
+                if res.get('s') == 'ok':
+                    df = pd.DataFrame({
+                        'time': pd.to_datetime(res['t'], unit='s'),
+                        'open': res['o'],
+                        'high': res['h'],
+                        'low': res['l'],
+                        'close': res['c'],
+                        'volume': res['v']
+                    })
+            except Exception as e:
+                last_error = f"{last_error} | VNDirect API error: {str(e)}"
                 
         # If vnstock completely fails, fallback to yfinance
         if (df is None or df.empty) and HAS_YF:

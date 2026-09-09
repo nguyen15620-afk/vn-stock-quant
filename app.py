@@ -92,11 +92,23 @@ with tab2:
     strategy_type = st.sidebar.selectbox("Chiến lược", options=strategy_options, format_func=lambda x: strategy_labels[x])
     take_profit = st.sidebar.number_input("Chốt lời (%) - Nhập 0 để tắt", min_value=0.0, max_value=100.0, value=15.0, step=1.0) / 100.0
     stop_loss = st.sidebar.number_input("Cắt lỗ (%) - Nhập 0 để tắt", min_value=0.0, max_value=100.0, value=7.0, step=1.0) / 100.0
+    use_market_filter = st.sidebar.checkbox("🛡️ Chặn Mua khi VNINDEX < MA50", value=True)
 
     if st.button("Phân tích chi tiết"):
         with st.spinner("Đang tải dữ liệu và tính toán..."):
             # 1. Load Data
             df = load_historical_data(ticker, months=months, interval=interval)
+            
+            market_regime_series = None
+            if use_market_filter:
+                # Always fetch at least 6 months to ensure MA50 has enough data
+                fetch_months = max(months, 6)
+                df_vnindex = load_historical_data("VNINDEX", months=fetch_months, interval=interval)
+                if not df_vnindex.empty:
+                    df_vnindex['sma50'] = df_vnindex['close'].rolling(50).mean()
+                    # Index by time for alignment
+                    df_vnindex.set_index('time', inplace=True)
+                    market_regime_series = df_vnindex['close'] > df_vnindex['sma50']
             
             if df.empty:
                 st.error(f"Không thể tải dữ liệu cho mã {ticker}.")
@@ -113,11 +125,14 @@ with tab2:
                         fa3.metric("ROE (%)", f"{fa_data.get('ROE', 0)*100:.2f}%" if fa_data.get('ROE') else "N/A")
                         fa4.metric("Tăng trưởng DT", f"{fa_data.get('RevenueGrowth', 0)*100:.2f}%" if fa_data.get('RevenueGrowth') else "N/A")
                 
+                # Align df index by time so we can pass aligned regime series
+                df.set_index('time', inplace=True, drop=False)
+                
                 # 2. Compute Indicators
                 df = compute_indicators(df)
                 
                 # 3. Generate Signals
-                df = generate_signals(df, strategy_type=strategy_type)
+                df = generate_signals(df, strategy_type=strategy_type, market_regime=market_regime_series)
                 
                 # 4. Run Backtest
                 bt_results = run_backtest(df, take_profit_pct=take_profit, stop_loss_pct=stop_loss)
@@ -257,17 +272,28 @@ with tab3:
 
     st.write(f"Hệ thống sẽ tải dữ liệu và kiểm tra các điều kiện Mua/Bán cho toàn bộ {len(tickers_to_scan)} mã cổ phiếu. Việc này có thể mất 10-30 giây.")
     
-    col_opt1, col_opt2, col_opt3 = st.columns(3)
+    col_opt1, col_opt2, col_opt3, col_opt4 = st.columns(4)
     with col_opt1:
         scan_interval = st.selectbox("Khung thời gian quét:", options=["1d", "1wk", "1h"], format_func=lambda x: {"1d": "Ngày (Daily)", "1wk": "Tuần (Weekly)", "1h": "Giờ (Hourly)"}[x])
     with col_opt2:
         use_yf = st.checkbox("⚡ Quét Nhanh (Yahoo Finance)", value=True)
     with col_opt3:
-        use_fa_filter = st.checkbox("🛡️ Kết hợp lọc Cơ bản (P/E < 25 & ROE > 10%)", value=False)
+        use_fa_filter = st.checkbox("🛡️ Lọc Cơ bản (P/E<25, ROE>10%)", value=False)
+    with col_opt4:
+        use_market_filter_scan = st.checkbox("🛡️ Chặn Mua khi VNINDEX xấu", value=True)
     
     if st.button("Bắt đầu Quét", type="primary"):
         progress_bar = st.progress(0)
         status_text = st.empty()
+        
+        market_regime_series = None
+        if use_market_filter_scan:
+            status_text.text("Đang tải dữ liệu VNINDEX...")
+            df_vnindex = load_historical_data("VNINDEX", months=6, interval=scan_interval)
+            if not df_vnindex.empty:
+                df_vnindex['sma50'] = df_vnindex['close'].rolling(50).mean()
+                df_vnindex.set_index('time', inplace=True)
+                market_regime_series = df_vnindex['close'] > df_vnindex['sma50']
         
         results = []
         
@@ -291,11 +317,12 @@ with tab3:
                     passed_fa = False # Missing data
             
             if passed_fa:
-                # Use 4 months to calculate long indicators like Ichimoku 52 safely
-                df_scan = load_historical_data(sym, months=4, use_yfinance_only=use_yf, interval=scan_interval) 
+                # Use 6 months to calculate long indicators like Ichimoku 52 safely and SMA50
+                df_scan = load_historical_data(sym, months=6, use_yfinance_only=use_yf, interval=scan_interval) 
                 if not df_scan.empty:
+                    df_scan.set_index('time', inplace=True, drop=False)
                     df_scan = compute_indicators(df_scan)
-                    df_scan = generate_signals(df_scan)
+                    df_scan = generate_signals(df_scan, market_regime=market_regime_series)
                     
                     latest_scan = df_scan.iloc[-1]
                     
