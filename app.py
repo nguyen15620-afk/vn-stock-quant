@@ -23,7 +23,8 @@ tab1, tab2, tab3 = st.tabs(["📊 Tổng quan Thị trường", "🔍 Phân tíc
 
 with tab1:
     st.header("Thị trường Chung (VNINDEX)")
-    df_vnindex = load_historical_data("VNINDEX", months=3, use_yfinance_only=True)
+    # VNINDEX data is often unavailable on Yahoo Finance, so we must rely on vnstock (use_yfinance_only=False)
+    df_vnindex = load_historical_data("VNINDEX", months=3, use_yfinance_only=False)
     if not df_vnindex.empty:
         latest_vn = df_vnindex.iloc[-1]
         prev_vn = df_vnindex.iloc[-2] if len(df_vnindex) > 1 else latest_vn
