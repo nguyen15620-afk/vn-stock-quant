@@ -135,6 +135,8 @@ with tab2:
     st.subheader("🚀 Bộ quét tín hiệu nhóm VN30")
     st.write("Hệ thống sẽ tải dữ liệu và kiểm tra các điều kiện Mua/Bán cho toàn bộ 30 mã cổ phiếu lớn nhất thị trường. Việc này có thể mất 10-30 giây.")
     
+    use_yf = st.checkbox("⚡ Chế độ Quét Nhanh (Sử dụng dữ liệu Yahoo Finance - Rất khuyên dùng trên Cloud)", value=True)
+    
     if st.button("Bắt đầu Quét", type="primary"):
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -145,7 +147,7 @@ with tab2:
             status_text.text(f"Đang quét {sym} ({i+1}/{len(VN30)})...")
             
             # Use 4 months to calculate long indicators like Ichimoku 52 safely
-            df_scan = load_historical_data(sym, months=4) 
+            df_scan = load_historical_data(sym, months=4, use_yfinance_only=use_yf) 
             if not df_scan.empty:
                 df_scan = compute_indicators(df_scan)
                 df_scan = generate_signals(df_scan)

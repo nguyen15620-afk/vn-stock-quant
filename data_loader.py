@@ -26,7 +26,7 @@ except ImportError:
     HAS_YF = False
 
 @st.cache_data(ttl=3600)  # Cache data for 1 hour to prevent spamming the API
-def load_historical_data(symbol: str, months: int = 12) -> pd.DataFrame:
+def load_historical_data(symbol: str, months: int = 12, use_yfinance_only: bool = False) -> pd.DataFrame:
     """
     Loads historical OHLCV data for a given symbol.
     Supports stocks and VNINDEX.
@@ -41,33 +41,34 @@ def load_historical_data(symbol: str, months: int = 12) -> pd.DataFrame:
     
     try:
         symbol_upper = symbol.upper()
+        df = None
+        last_error = ""
         
         # Streamlit Cloud runs on foreign IPs, which often get blocked by Vietnamese brokers (like VCI).
         # We will try multiple sources until one succeeds.
         sources = ['TCBS', 'SSI', 'VND', 'VCI']
-        df = None
-        last_error = None
         
-        for source in sources:
-            try:
-                if USE_NEW_API:
-                    # New API as per vnstock 4.0 migration guide
-                    q = Quote(symbol=symbol_upper, source=source)
-                    temp_df = q.history(start=start_str, end=end_str)
-                else:
-                    # Fallback for old API
-                    if symbol_upper == 'VNINDEX':
-                        stock = Vnstock().stock(symbol='VNINDEX', source=source)
+        if not use_yfinance_only:
+            for source in sources:
+                try:
+                    if USE_NEW_API:
+                        # New API as per vnstock 4.0 migration guide
+                        q = Quote(symbol=symbol_upper, source=source)
+                        temp_df = q.history(start=start_str, end=end_str)
                     else:
-                        stock = Vnstock().stock(symbol=symbol_upper, source=source)
-                    temp_df = stock.quote.history(start=start_str, end=end_str)
-                
-                if temp_df is not None and not temp_df.empty:
-                    df = temp_df
-                    break  # Success!
-            except Exception as e:
-                last_error = str(e)
-                continue # Try next source
+                        # Fallback for old API
+                        if symbol_upper == 'VNINDEX':
+                            stock = Vnstock().stock(symbol='VNINDEX', source=source)
+                        else:
+                            stock = Vnstock().stock(symbol=symbol_upper, source=source)
+                        temp_df = stock.quote.history(start=start_str, end=end_str)
+                    
+                    if temp_df is not None and not temp_df.empty:
+                        df = temp_df
+                        break  # Success!
+                except Exception as e:
+                    last_error = str(e)
+                    continue # Try next source
                 
         # If vnstock completely fails, fallback to yfinance
         if (df is None or df.empty) and HAS_YF:
