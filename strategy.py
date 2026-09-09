@@ -54,50 +54,55 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 def generate_signals(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Applies the Strategy 1: Trend Following logic.
+    Applies Strategy 1 using a 0-100 Power Score System.
     """
     df = df.copy()
     
     # Initialize columns
     df['signal'] = 'Hold'
     df['reason'] = ''
+    df['score'] = 0
+    df['trend_status'] = 'Trung lập'
 
     # Ensure we have enough data
     if len(df) < 2:
         return df
 
-    # --- BUY CONDITIONS ---
-    # 1. Giá > SMA20 (BB Mid)
-    cond_price_above_bb = df['close'] > df['bb_mid']
-    # 2. MACD Hist > 0
-    cond_macd_hist_pos = df['macd_hist'] > 0
-    # 3. Volume > SMA20
-    cond_vol_above_sma20 = df['volume'] > df['vol_sma20']
-    # 4. RSI > 50
-    cond_rsi_above_50 = df['rsi'] > 50
+    # --- SCORE CALCULATION (0 - 100) ---
+    cond_price_above_bb = (df['close'] > df['bb_mid']).astype(int)
+    cond_macd_hist_pos = (df['macd_hist'] > 0).astype(int)
+    cond_rsi_above_50 = (df['rsi'] > 50).astype(int)
+    cond_vol_above_sma20 = (df['volume'] > df['vol_sma20']).astype(int)
 
-    buy_mask = (
-        cond_price_above_bb & 
-        cond_macd_hist_pos & 
-        cond_vol_above_sma20 & 
-        cond_rsi_above_50
-    )
+    df['score'] = (cond_price_above_bb * 25) + (cond_macd_hist_pos * 25) + (cond_rsi_above_50 * 25) + (cond_vol_above_sma20 * 25)
     
-    # --- SELL CONDITIONS ---
-    # 1. Giá < SMA20 (BB Mid)
-    cond_price_below_bb = df['close'] < df['bb_mid']
-    # 2. MACD Hist < 0
-    cond_macd_hist_neg = df['macd_hist'] < 0
+    # --- TREND STATUS ---
+    df.loc[df['score'] >= 75, 'trend_status'] = 'Tích cực (Uptrend)'
+    df.loc[df['score'] <= 25, 'trend_status'] = 'Tiêu cực (Downtrend)'
+    df.loc[(df['score'] == 50) & (df['close'] > df['bb_mid']), 'trend_status'] = 'Trung lập (Nghiêng Tăng)'
+    df.loc[(df['score'] == 50) & (df['close'] <= df['bb_mid']), 'trend_status'] = 'Trung lập (Nghiêng Giảm)'
 
-    sell_mask = (
-        cond_price_below_bb | 
-        cond_macd_hist_neg
-    )
+    # --- BUY / SELL TRIGGERS ---
+    prev_score = df['score'].shift(1)
+    prev_close = df['close'].shift(1)
+    prev_bb_mid = df['bb_mid'].shift(1)
+    
+    # Điểm MUA mới: Điểm sức mạnh đạt 75 trở lên (hôm trước chưa đạt) 
+    # HOẶC giá cắt lên SMA20 đi kèm khối lượng lớn (Score nhảy lên >= 50 từ mức thấp)
+    buy_mask = (df['score'] >= 75) & (prev_score < 75)
+    
+    # Điểm BÁN mới: Điểm sức mạnh rớt xuống <= 25 
+    # HOẶC Giá thủng SMA20 (rất quan trọng để phòng thủ)
+    sell_mask = ((df['score'] <= 25) & (prev_score > 25)) | ((df['close'] < df['bb_mid']) & (prev_close >= prev_bb_mid))
 
     df.loc[buy_mask, 'signal'] = 'Buy'
-    df.loc[buy_mask, 'reason'] = 'Giá > SMA20, MACD_hist > 0, RSI > 50, Vol > SMA20'
+    df.loc[buy_mask, 'reason'] = 'Bùng nổ! Điểm MUA xuất hiện'
     
     df.loc[sell_mask, 'signal'] = 'Sell'
-    df.loc[sell_mask, 'reason'] = 'Giá thủng SMA20 HOẶC MACD_hist < 0'
+    df.loc[sell_mask, 'reason'] = 'Cảnh báo! Thủng hỗ trợ hoặc Suy yếu'
+    
+    # Dành cho những ngày không có trigger (Hold)
+    hold_mask = (~buy_mask) & (~sell_mask)
+    df.loc[hold_mask, 'reason'] = df['trend_status']
 
     return df

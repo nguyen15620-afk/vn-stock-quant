@@ -59,11 +59,11 @@ with tab1:
                     
                 # Metrics Row
                 col1, col2, col3, col4, col5 = st.columns(5)
-                col1.metric("Close", f"{latest['close']:,.0f}", f"{latest['close'] - prev['close']:,.0f}")
-                col2.metric("RSI (14)", f"{latest['rsi']:.1f}", f"{latest['rsi'] - prev['rsi']:.1f}")
-                col3.metric("MACD Hist", f"{latest['macd_hist']:.2f}", f"{latest['macd_hist'] - prev['macd_hist']:.2f}")
-                col4.metric("StochRSI %K", f"{latest['stoch_rsi_k']:.1f}", f"{latest['stoch_rsi_k'] - prev['stoch_rsi_k']:.1f}")
-                col5.metric("Volume", f"{latest['volume']:,.0f}", f"{latest['volume'] - latest['vol_sma9']:,.0f} vs SMA9")
+                col1.metric("Điểm Sức Mạnh", f"{int(latest['score'])}/100", f"{int(latest['score'] - prev['score'])}")
+                col2.metric("Close", f"{latest['close']:,.0f}", f"{latest['close'] - prev['close']:,.0f}")
+                col3.metric("RSI (14)", f"{latest['rsi']:.1f}", f"{latest['rsi'] - prev['rsi']:.1f}")
+                col4.metric("MACD Hist", f"{latest['macd_hist']:.2f}", f"{latest['macd_hist'] - prev['macd_hist']:.2f}")
+                col5.metric("Volume", f"{latest['volume']:,.0f}", f"{latest['volume'] - latest['vol_sma20']:,.0f} so với SMA20")
                 
                 st.markdown("---")
                 
@@ -156,12 +156,12 @@ with tab2:
                 
                 results.append({
                     "Mã CP": sym,
-                    "Ngày": latest_scan['time'].strftime('%Y-%m-%d'),
-                    "Giá Close": latest_scan['close'],
-                    "Tín hiệu": latest_scan['signal'],
+                    "Điểm (0-100)": int(latest_scan['score']),
+                    "Vị thế hiện tại": latest_scan['trend_status'],
+                    "Tín hiệu hôm nay": latest_scan['signal'],
                     "Lý do": latest_scan['reason'] if latest_scan['reason'] else "-",
-                    "RSI": round(latest_scan['rsi'], 1),
-                    "MACD Hist": round(latest_scan['macd_hist'], 2)
+                    "Ngày": latest_scan['time'].strftime('%Y-%m-%d'),
+                    "Giá Close": f"{latest_scan['close']:,.0f}"
                 })
                 
             progress_bar.progress((i + 1) / len(VN30))
@@ -170,23 +170,29 @@ with tab2:
         
         if results:
             df_results = pd.DataFrame(results)
+            # Sort by Score descending
+            df_results = df_results.sort_values(by="Điểm (0-100)", ascending=False).reset_index(drop=True)
             
-            st.markdown("### 📋 Kết quả Quét Tín hiệu")
+            st.markdown("### 📋 Bảng Xếp Hạng Sức Mạnh VN30")
             
-            # Lọc các mã có tín hiệu Buy hoặc Sell lên đầu
-            df_buy = df_results[df_results["Tín hiệu"] == "Buy"]
-            df_sell = df_results[df_results["Tín hiệu"] == "Sell"]
-            df_hold = df_results[df_results["Tín hiệu"] == "Hold"]
+            # Lọc các danh mục
+            df_strong = df_results[df_results["Điểm (0-100)"] >= 75]
+            df_neutral = df_results[df_results["Điểm (0-100)"] == 50]
+            df_weak = df_results[df_results["Điểm (0-100)"] <= 25]
             
-            if not df_buy.empty:
-                st.success(f"🟢 Tìm thấy {len(df_buy)} mã có tín hiệu MUA:")
-                st.dataframe(df_buy.style.apply(lambda x: ['background: #e6ffe6' for _ in x], axis=1), use_container_width=True)
+            if not df_strong.empty:
+                st.success(f"🟢 Nhóm MẠNH (Uptrend) - Tích cực nắm giữ ({len(df_strong)} mã):")
+                st.dataframe(df_strong.style.apply(lambda x: ['background: #e6ffe6' for _ in x], axis=1), use_container_width=True)
                 
-            if not df_sell.empty:
-                st.error(f"🔴 Tìm thấy {len(df_sell)} mã có tín hiệu BÁN:")
-                st.dataframe(df_sell.style.apply(lambda x: ['background: #ffe6e6' for _ in x], axis=1), use_container_width=True)
+            if not df_neutral.empty:
+                st.warning(f"🟡 Nhóm TRUNG LẬP - Đang tích lũy/Đi ngang ({len(df_neutral)} mã):")
+                st.dataframe(df_neutral.style.apply(lambda x: ['background: #ffffe6' for _ in x], axis=1), use_container_width=True)
                 
-            with st.expander("Các mã đang ở trạng thái Hold (Đứng ngoài / Nắm giữ)"):
-                st.dataframe(df_hold, use_container_width=True)
+            if not df_weak.empty:
+                st.error(f"🔴 Nhóm YẾU (Downtrend) - Nên đứng ngoài ({len(df_weak)} mã):")
+                st.dataframe(df_weak.style.apply(lambda x: ['background: #ffe6e6' for _ in x], axis=1), use_container_width=True)
+                
+            st.markdown("---")
+            st.markdown("**Ghi chú Tín hiệu hôm nay:** Chỉ báo 'Buy' hoặc 'Sell' xuất hiện khi cổ phiếu có điểm bứt phá hoặc gãy nền trong đúng phiên hôm nay.")
         else:
             st.warning("Không có dữ liệu trả về trong quá trình quét.")
