@@ -112,15 +112,32 @@ with tab2:
                 latest = df.iloc[-1]
                 prev = df.iloc[-2] if len(df) > 1 else latest
                 
-                st.subheader(f"📊 Kết quả cho {ticker} (Ngày: {latest['time'].strftime('%Y-%m-%d')})")
+                # Dynamic translation for Signal UX
+                raw_signal = latest['signal']
+                display_signal = raw_signal
+                signal_color = "gray"
                 
-                # Highlight Signal
-                signal_color = "green" if latest['signal'] == 'Buy' else "red" if latest['signal'] == 'Sell' else "gray"
-                st.markdown(f"### Tín hiệu hiện tại: <span style='color:{signal_color}'>{latest['signal']}</span>", unsafe_allow_html=True)
+                if raw_signal == 'Buy':
+                    display_signal = "🟢 MUA MỚI (Buy)"
+                    signal_color = "#00cc00"
+                elif raw_signal == 'Sell':
+                    display_signal = "🔴 BÁN / CẮT LỖ (Sell)"
+                    signal_color = "#ff3333"
+                else: # Hold
+                    score = latest['score']
+                    if score >= 75:
+                        display_signal = "📈 NẮM GIỮ CỔ PHIẾU (Hold Position)"
+                        signal_color = "#33cc33"
+                    elif score <= 25:
+                        display_signal = "🛡️ ĐỨNG NGOÀI (Hold Cash)"
+                        signal_color = "#ff9999"
+                    else:
+                        display_signal = "👀 QUAN SÁT (Watch)"
+                        signal_color = "#cccccc"
+                
+                st.markdown(f"### Tín hiệu hôm nay: <span style='color:{signal_color}'>{display_signal}</span>", unsafe_allow_html=True)
                 if latest['reason']:
-                    st.info(f"Lý do: {latest['reason']}")
-                elif latest['signal'] == 'Hold':
-                    st.info("Chưa có tín hiệu mới, tiếp tục nắm giữ hoặc đứng ngoài theo xu hướng trước đó.")
+                    st.info(f"Trạng thái / Lý do: {latest['reason']}")
                     
                 # Metrics Row
                 col1, col2, col3, col4, col5 = st.columns(5)
@@ -268,11 +285,25 @@ with tab3:
                     
                     latest_scan = df_scan.iloc[-1]
                     
+                    raw_signal = latest_scan['signal']
+                    if raw_signal == 'Buy':
+                        display_signal = "🟢 MUA MỚI"
+                    elif raw_signal == 'Sell':
+                        display_signal = "🔴 BÁN / CẮT LỖ"
+                    else:
+                        score = latest_scan['score']
+                        if score >= 75:
+                            display_signal = "📈 NẮM GIỮ"
+                        elif score <= 25:
+                            display_signal = "🛡️ ĐỨNG NGOÀI"
+                        else:
+                            display_signal = "👀 QUAN SÁT"
+                    
                     res_dict = {
                         "Mã CP": sym,
                         "Điểm (0-100)": int(latest_scan['score']),
                         "Vị thế hiện tại": latest_scan['trend_status'],
-                        "Tín hiệu hôm nay": latest_scan['signal'],
+                        "Tín hiệu hôm nay": display_signal,
                         "Lý do": latest_scan['reason'] if latest_scan['reason'] else "-",
                         "Ngày": latest_scan['time'].strftime('%Y-%m-%d'),
                         "Giá Close": f"{latest_scan['close']:,.0f}"
@@ -316,3 +347,4 @@ with tab3:
         else:
             st.warning("Không có dữ liệu trả về trong quá trình quét.")
 # Force Streamlit reload
+# Reload app.py
