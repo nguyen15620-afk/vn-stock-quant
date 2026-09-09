@@ -79,6 +79,12 @@ with tab2:
     months = st.sidebar.slider("Dữ liệu lịch sử (Tháng)", min_value=3, max_value=24, value=6, step=1)
     interval = st.sidebar.selectbox("Khung thời gian", options=["1d", "1wk", "1h"], format_func=lambda x: {"1d": "Ngày (Daily)", "1wk": "Tuần (Weekly)", "1h": "Giờ (Hourly)"}[x])
 
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🧪 Tùy chỉnh Backtest")
+    strategy_type = st.sidebar.selectbox("Chiến lược", options=["trend", "mean_reversion", "momentum"], format_func=lambda x: {"trend": "Xu hướng (Trend Following)", "mean_reversion": "Bắt đáy (RSI Oversold)", "momentum": "Động lượng (EMA Crossover)"}[x])
+    take_profit = st.sidebar.number_input("Chốt lời (%) - Nhập 0 để tắt", min_value=0.0, max_value=100.0, value=15.0, step=1.0) / 100.0
+    stop_loss = st.sidebar.number_input("Cắt lỗ (%) - Nhập 0 để tắt", min_value=0.0, max_value=100.0, value=7.0, step=1.0) / 100.0
+
     if st.button("Phân tích chi tiết"):
         with st.spinner("Đang tải dữ liệu và tính toán..."):
             # 1. Load Data
@@ -103,10 +109,10 @@ with tab2:
                 df = compute_indicators(df)
                 
                 # 3. Generate Signals
-                df = generate_signals(df)
+                df = generate_signals(df, strategy_type=strategy_type)
                 
                 # 4. Run Backtest
-                bt_results = run_backtest(df)
+                bt_results = run_backtest(df, take_profit_pct=take_profit, stop_loss_pct=stop_loss)
                 
                 # 5. Display Latest Info
                 latest = df.iloc[-1]
