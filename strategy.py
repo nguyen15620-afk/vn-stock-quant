@@ -59,9 +59,23 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['roll_high_20'] = df['high'].rolling(window=20).max()
     df['roll_low_10'] = df['low'].rolling(window=10).min()
     
+    # 10. Multi-Timeframe (Weekly Trend)
+    if len(df) > 20:
+        df_temp = df.copy()
+        df_temp.set_index('time', inplace=True)
+        df_w = df_temp.resample('W-FRI').agg({'close': 'last'}).dropna()
+        df_w['w_sma20'] = df_w['close'].rolling(20).mean()
+        df_w['w_trend_up'] = df_w['close'] > df_w['w_sma20']
+        
+        # Map weekly trend back to daily dataframe
+        weekly_trend_map = df_w['w_trend_up'].set_axis(df_w.index.to_period('W-FRI'))
+        df['w_trend_up'] = df['time'].dt.to_period('W-FRI').map(weekly_trend_map).fillna(False)
+    else:
+        df['w_trend_up'] = True
+        
     return df
 
-def generate_signals(df: pd.DataFrame, strategy_type: str = 'trend', market_regime: pd.Series = None) -> pd.DataFrame:
+def generate_signals(df: pd.DataFrame, strategy_type: str = 'trend', market_regime: pd.Series = None, use_mtf: bool = False) -> pd.DataFrame:
     """
     Generates Buy/Sell/Hold signals based on the selected strategy.
     Strategies: 'trend' (Breakout/Trend Following), 'momentum' (Fast EMA), 'mean_reversion' (Bottom Fishing), 'turtle' (Turtle Trading), 'ichimoku' (Cloud Breakout).
@@ -174,6 +188,12 @@ def generate_signals(df: pd.DataFrame, strategy_type: str = 'trend', market_regi
         # Chỉ giữ Buy khi market_regime_aligned == True
         df.loc[blocked_buys & (~market_regime_aligned), 'signal'] = 'Hold'
         df.loc[blocked_buys & (~market_regime_aligned), 'reason'] = 'Tín hiệu MUA bị HỦY do VNINDEX xấu'
+
+    # --- Tùy chọn Phòng thủ Đa khung thời gian (MTF) ---
+    if use_mtf and 'w_trend_up' in df.columns:
+        blocked_by_mtf = (df['signal'] == 'Buy') & (~df['w_trend_up'].astype(bool))
+        df.loc[blocked_by_mtf, 'signal'] = 'Hold'
+        df.loc[blocked_by_mtf, 'reason'] = 'Tín hiệu MUA bị HỦY do Xu hướng Tuần (Weekly) đang xấu'
 
     # Fallback for 'Hold' reason
     hold_mask = (df['signal'] == 'Hold') & (df['reason'] == '')

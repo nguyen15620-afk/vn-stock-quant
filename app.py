@@ -91,7 +91,9 @@ with tab2:
     strategy_type = st.sidebar.selectbox("Chiến lược", options=strategy_options, format_func=lambda x: strategy_labels[x])
     take_profit = st.sidebar.number_input("Chốt lời (%) - Nhập 0 để tắt", min_value=0.0, max_value=100.0, value=15.0, step=1.0) / 100.0
     stop_loss = st.sidebar.number_input("Cắt lỗ (%) - Nhập 0 để tắt", min_value=0.0, max_value=100.0, value=7.0, step=1.0) / 100.0
+    trailing_sl = st.sidebar.number_input("Trailing Stop (%) - Chặn lãi động", min_value=0.0, max_value=100.0, value=0.0, step=1.0) / 100.0
     use_market_filter = st.sidebar.checkbox("🛡️ Chặn Mua khi VNINDEX < MA50", value=True)
+    use_mtf = st.sidebar.checkbox("🛡️ Khung Tuần (MTF) phải là Uptrend", value=True)
 
     if st.button("Phân tích chi tiết"):
         with st.spinner("Đang tải dữ liệu và tính toán..."):
@@ -133,10 +135,10 @@ with tab2:
                 df = compute_indicators(df)
                 
                 # 3. Generate Signals
-                df = generate_signals(df, strategy_type=strategy_type, market_regime=market_regime_series)
+                df = generate_signals(df, strategy_type=strategy_type, market_regime=market_regime_series, use_mtf=use_mtf)
                 
                 # 4. Run Backtest
-                bt_results = run_backtest(df, take_profit_pct=take_profit, stop_loss_pct=stop_loss)
+                bt_results = run_backtest(df, take_profit_pct=take_profit, stop_loss_pct=stop_loss, trailing_sl_pct=trailing_sl)
                 
                 # 5. Display Latest Info
                 latest = df.iloc[-1]
@@ -279,9 +281,18 @@ with tab3:
     with col_opt2:
         use_yf = st.checkbox("⚡ Quét Nhanh (Yahoo Finance)", value=True)
     with col_opt3:
-        use_fa_filter = st.checkbox("🛡️ Lọc Cơ bản (P/E<25, ROE>10%)", value=False)
-    with col_opt4:
         use_market_filter_scan = st.checkbox("🛡️ Chặn Mua khi VNINDEX xấu", value=True)
+    with col_opt4:
+        use_mtf_scan = st.checkbox("🛡️ Chặn Mua nếu Khung Tuần (MTF) xấu", value=True)
+        
+    st.markdown("**Bộ lọc Cơ bản (FA)**")
+    col_fa1, col_fa2, col_fa3 = st.columns(3)
+    with col_fa1:
+        use_fa_filter = st.checkbox("Bật Lọc FA", value=False)
+    with col_fa2:
+        min_roe_scan = st.slider("ROE tối thiểu (%)", 0, 50, 10, disabled=not use_fa_filter)
+    with col_fa3:
+        max_pe_scan = st.slider("P/E tối đa", 5, 100, 25, disabled=not use_fa_filter)
     
     if st.button("Bắt đầu Quét", type="primary"):
         progress_bar = st.progress(0)
@@ -313,7 +324,7 @@ with tab3:
                 roe_val = f"{roe*100:.1f}%" if roe else "N/A"
                 
                 if pe and roe:
-                    if pe >= 25 or pe <= 0 or roe <= 0.1:
+                    if pe >= max_pe_scan or pe <= 0 or (roe * 100) <= min_roe_scan:
                         passed_fa = False
                 else:
                     passed_fa = False # Missing data
@@ -325,7 +336,7 @@ with tab3:
                     df_scan['date_str'] = df_scan['time'].dt.strftime('%Y-%m-%d')
                     df_scan.set_index('date_str', inplace=True, drop=False)
                     df_scan = compute_indicators(df_scan)
-                    df_scan = generate_signals(df_scan, market_regime=market_regime_series)
+                    df_scan = generate_signals(df_scan, market_regime=market_regime_series, use_mtf=use_mtf_scan)
                     
                     latest_scan = df_scan.iloc[-1]
                     

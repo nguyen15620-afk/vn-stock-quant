@@ -6,3 +6,5 @@ ta
 vnstock
 requests
 yfinance
+schedule
+python-dotenv

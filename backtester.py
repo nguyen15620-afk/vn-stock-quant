@@ -1,9 +1,9 @@
 import pandas as pd
 import numpy as np
 
-def run_backtest(df: pd.DataFrame, initial_capital: float = 100000000.0, take_profit_pct: float = 0.0, stop_loss_pct: float = 0.0) -> dict:
+def run_backtest(df: pd.DataFrame, initial_capital: float = 100000000.0, take_profit_pct: float = 0.0, stop_loss_pct: float = 0.0, trailing_sl_pct: float = 0.0) -> dict:
     """
-    Runs a backtest supporting Stop Loss and Take Profit.
+    Runs a backtest supporting Stop Loss, Take Profit, and Trailing Stop.
     """
     if df.empty or 'signal' not in df.columns:
         return {}
@@ -16,6 +16,7 @@ def run_backtest(df: pd.DataFrame, initial_capital: float = 100000000.0, take_pr
     
     current_pos = 0
     entry_price = 0.0
+    max_price_since_entry = 0.0
     wins = 0
     completed_trades = 0
     
@@ -25,8 +26,9 @@ def run_backtest(df: pd.DataFrame, initial_capital: float = 100000000.0, take_pr
         
         if current_pos == 1:
             pnl = (close - entry_price) / entry_price
+            max_price_since_entry = max(max_price_since_entry, close)
             
-            # Check Stop Loss / Take Profit
+            # Check Stop Loss / Take Profit / Trailing Stop
             if take_profit_pct > 0 and pnl >= take_profit_pct:
                 current_pos = 0
                 actual_signals[i] = 'Sell' # TP triggered
@@ -38,6 +40,14 @@ def run_backtest(df: pd.DataFrame, initial_capital: float = 100000000.0, take_pr
                 current_pos = 0
                 actual_signals[i] = 'Sell' # SL triggered
                 df.at[df.index[i], 'reason'] = f'Cắt lỗ tự động ({pnl*100:.1f}%)'
+                completed_trades += 1
+                entry_price = 0.0
+            elif trailing_sl_pct > 0 and close <= max_price_since_entry * (1 - trailing_sl_pct):
+                current_pos = 0
+                actual_signals[i] = 'Sell' # Trailing SL triggered
+                df.at[df.index[i], 'reason'] = f'Chặn lãi tự động (Trailing SL -{trailing_sl_pct*100:.1f}%)'
+                if pnl > 0:
+                    wins += 1
                 completed_trades += 1
                 entry_price = 0.0
             elif sig == 'Sell':
@@ -54,6 +64,7 @@ def run_backtest(df: pd.DataFrame, initial_capital: float = 100000000.0, take_pr
             if sig == 'Buy':
                 current_pos = 1
                 entry_price = close
+                max_price_since_entry = close
                 actual_signals[i] = 'Buy'
             else:
                 actual_signals[i] = 'Hold'
