@@ -168,8 +168,8 @@ def generate_signals(df: pd.DataFrame, strategy_type: str = 'trend', market_regi
         # Giữ nguyên các lệnh Sell vì vẫn cần cắt lỗ/chốt lời
         blocked_buys = df['signal'] == 'Buy'
         # market_regime có thể là một Series bool có cùng index, map theo thời gian. 
-        # Cần reindex để khớp với df
-        market_regime_aligned = market_regime.reindex(df.index).fillna(False)
+        # Cần reindex để khớp với df và đưa về dạng bool
+        market_regime_aligned = market_regime.reindex(df.index).fillna(False).astype(bool)
         
         # Chỉ giữ Buy khi market_regime_aligned == True
         df.loc[blocked_buys & (~market_regime_aligned), 'signal'] = 'Hold'
