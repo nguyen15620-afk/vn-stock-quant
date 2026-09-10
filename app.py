@@ -24,11 +24,10 @@ tab1, tab2, tab3 = st.tabs(["📊 Tổng quan Thị trường", "🔍 Phân tíc
 
 with tab1:
     st.header("📊 Bảng Điều Khiển: Sức Khỏe Thị Trường")
-    st.write("Đánh giá xu hướng chung của thị trường (dựa trên rổ VN30) để quyết định tỷ trọng giải ngân an toàn.")
+    st.write("Đánh giá xu hướng chung của thị trường (VN-INDEX) để quyết định tỷ trọng giải ngân an toàn.")
     
-    # VNINDEX data is blocked on vnstock Cloud, and not supported on Yahoo Finance.
-    # We use the E1VFVN30 ETF as a perfect proxy for the market trend using Yahoo Finance.
-    df_vnindex = load_historical_data("E1VFVN30", months=6, use_yfinance_only=True)
+    # VNINDEX data loaded directly using our robust fallback in data_loader
+    df_vnindex = load_historical_data("VNINDEX", months=6)
     if not df_vnindex.empty:
         df_vnindex = compute_indicators(df_vnindex)
         df_vnindex = generate_signals(df_vnindex)
@@ -39,7 +38,7 @@ with tab1:
         # Layout metrics and Market Health
         col1, col2 = st.columns([1, 2])
         with col1:
-            st.metric("Quỹ VN30 ETF (Đại diện VNINDEX)", f"{latest_vn['close']:,.0f}", f"{latest_vn['close'] - prev_vn['close']:,.0f}")
+            st.metric("Chỉ số VN-INDEX", f"{latest_vn['close']:,.2f}", f"{latest_vn['close'] - prev_vn['close']:,.0f}")
             
         with col2:
             # Market condition based on ETF trend
@@ -57,12 +56,12 @@ with tab1:
         fig_vn = go.Figure()
         fig_vn.add_trace(go.Candlestick(
             x=df_vnindex['time'], open=df_vnindex['open'], high=df_vnindex['high'], 
-            low=df_vnindex['low'], close=df_vnindex['close'], name="VN30 ETF"
+            low=df_vnindex['low'], close=df_vnindex['close'], name="VN-INDEX"
         ))
         fig_vn.add_trace(go.Scatter(x=df_vnindex['time'], y=df_vnindex['bb_mid'], line=dict(color='orange', width=2), name="Đường Hỗ trợ/Kháng cự (SMA20)"))
         
         fig_vn.update_layout(
-            title="Biểu đồ Nhịp đập Thị trường (6 Tháng) - So sánh giá với Đường SMA20", 
+            title="Biểu đồ Nhịp đập Thị trường VN-INDEX (6 Tháng) - So sánh giá với Đường SMA20", 
             height=500, 
             xaxis_rangeslider_visible=False,
             margin=dict(l=0, r=0, t=40, b=0)
