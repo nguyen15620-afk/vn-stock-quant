@@ -13,7 +13,7 @@ fa_model = None
 macro_model = None
 master_model = None
 
-def configure_gemini(api_key: str):
+def configure_gemini(api_key: str, model_name: str = "gemini-1.5-flash"):
     global tech_model, fa_model, macro_model, master_model
     
     if not api_key:
@@ -23,15 +23,15 @@ def configure_gemini(api_key: str):
     
     # Khởi tạo mô hình sau khi configure
     try:
-        tech_model = genai.GenerativeModel("gemini-1.5-flash-latest")
-        fa_model = genai.GenerativeModel("gemini-1.5-flash-latest")
-        macro_model = genai.GenerativeModel("gemini-1.5-flash-latest")
-        master_model = genai.GenerativeModel("gemini-1.5-pro-latest")
+        tech_model = genai.GenerativeModel(model_name)
+        fa_model = genai.GenerativeModel(model_name)
+        macro_model = genai.GenerativeModel(model_name)
+        master_model = genai.GenerativeModel(model_name)
     except Exception as e:
         print(f"Error initializing models: {e}")
 
-# Áp dụng cơ chế Retry: Thử tối đa 3 lần, delay tăng dần từ 2s đến 10s
-@retry(wait=wait_exponential(multiplier=1, min=2, max=10), stop=stop_after_attempt(3), reraise=True)
+# Giảm thời gian chờ retry để báo lỗi nhanh hơn nếu cấu hình sai
+@retry(wait=wait_exponential(multiplier=1, min=1, max=3), stop=stop_after_attempt(2), reraise=True)
 async def fetch_gemini_response(model, prompt, generation_config=None):
     if generation_config:
         response = await model.generate_content_async(prompt, generation_config=generation_config)

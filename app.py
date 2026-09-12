@@ -20,7 +20,11 @@ from ai_agents import analyze_stock_async, configure_gemini
 
 st.title("⚡ Trợ lý AI Giao dịch Chứng khoán (Gemini Pro)")
 
-api_key_input = st.text_input("🔑 Nhập Google GenAI API Key:", type="password", placeholder="Paste API Key của bạn vào đây...")
+col_key, col_model = st.columns([3, 1])
+with col_key:
+    api_key_input = st.text_input("🔑 Nhập Google GenAI API Key:", type="password", placeholder="Paste API Key của bạn vào đây...")
+with col_model:
+    selected_model = st.selectbox("🧠 Chọn Model AI:", ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.5-flash", "gemini-pro"])
 
 # Input Section
 col_input1, col_input2, col_input3 = st.columns([1, 1, 2])
@@ -38,8 +42,8 @@ if analyze_btn:
         st.error("⚠️ Bạn cần nhập API Key để chạy AI Agents!")
         st.stop()
         
-    # Cấu hình Gemini với API Key người dùng nhập
-    configure_gemini(api_key_input)
+    # Cấu hình Gemini với API Key và Model người dùng chọn
+    configure_gemini(api_key_input, selected_model)
     
     # UX Tối ưu: Trạng thái chờ
     status = st.status("🔍 Đang tiến hành lấy dữ liệu và phân tích...", expanded=True)
