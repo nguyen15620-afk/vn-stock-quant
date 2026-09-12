@@ -21,7 +21,7 @@ from ai_agents import analyze_stock_async, configure_gemini
 st.title("⚡ Trợ lý AI Giao dịch Chứng khoán (Gemini Pro)")
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def get_available_models(api_key):
+def get_available_models(api_key, free_tier_mode=True):
     api_key = api_key.strip()
     if not api_key:
         return ["Vui lòng nhập API Key trước"]
@@ -39,17 +39,20 @@ def get_available_models(api_key):
             
         models = []
         for name in raw_models:
-            # Bỏ qua các model cũ có số phiên bản cụ thể (ví dụ: -001, -002)
             if re.search(r'-\d{3}$', name):
                 continue
-            # Bỏ qua các model không phải gemini (như embedding, bison)
             if 'gemini' not in name:
                 continue
-            # Bỏ qua bản -latest nếu đã có bản gốc (ví dụ: bỏ gemini-1.5-flash-latest nếu đã có gemini-1.5-flash)
             if name.endswith('-latest'):
                 base = name.replace('-latest', '')
                 if base in raw_models:
                     continue
+                    
+            # Bộ lọc an toàn cho Free Tier: Ẩn các model Pro đời cao (thường bị khóa limit=0)
+            if free_tier_mode:
+                if 'pro' in name and ('3' in name or '2' in name):
+                    continue
+                    
             models.append(name)
             
         models = sorted(models, key=lambda x: ('flash' not in x, x))
@@ -62,8 +65,10 @@ if api_key_input:
     api_key_input = api_key_input.strip()
 
 with st.expander("⚙️ Tùy chỉnh Model AI cho từng Đặc vụ", expanded=True):
+    free_tier_mode = st.checkbox("🟢 Chế độ an toàn Miễn phí (Ẩn các model cao cấp bị khóa Limit=0)", value=True)
+    
     if api_key_input:
-        model_list = get_available_models(api_key_input)
+        model_list = get_available_models(api_key_input, free_tier_mode)
     else:
         model_list = ["Vui lòng nhập API Key trước"]
         
