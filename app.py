@@ -24,7 +24,13 @@ col_key, col_model = st.columns([3, 1])
 with col_key:
     api_key_input = st.text_input("🔑 Nhập Google GenAI API Key:", type="password", placeholder="Paste API Key của bạn vào đây...")
 with col_model:
-    selected_model = st.selectbox("🧠 Chọn Model AI:", ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.5-flash", "gemini-pro"])
+    selected_model = st.selectbox("🧠 Chọn Model AI:", [
+        "gemini-3.5-flash", 
+        "gemini-3.8-flash", 
+        "gemini-3.1-pro", 
+        "gemini-1.5-flash", 
+        "gemini-1.5-pro"
+    ])
 
 # Input Section
 col_input1, col_input2, col_input3 = st.columns([1, 1, 2])
