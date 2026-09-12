@@ -140,12 +140,15 @@ async def run_master_agent(ticker: str, current_price: float, tech_analysis: str
 async def analyze_stock_async(ticker: str, current_price: float, tech_data: str, fa_data: str, market_data: str) -> dict:
     """Hàm main để chạy song song 3 Agent con, sau đó gọi Master Agent"""
     
-    # 1. Chạy song song 3 Agent con
-    tech_task = run_technical_agent(ticker, tech_data)
-    fa_task = run_fundamental_agent(ticker, fa_data)
-    macro_task = run_macro_agent(ticker, market_data)
+    # 1. Chạy tuần tự từng Agent con (Tránh lỗi 429 Rate Limit của bản Miễn phí)
+    tech_result = await run_technical_agent(ticker, tech_data)
+    await asyncio.sleep(2) # Nghỉ 2s giữa các request
     
-    tech_result, fa_result, macro_result = await asyncio.gather(tech_task, fa_task, macro_task)
+    fa_result = await run_fundamental_agent(ticker, fa_data)
+    await asyncio.sleep(2)
+    
+    macro_result = await run_macro_agent(ticker, market_data)
+    await asyncio.sleep(2)
     
     # 2. Gọi Master Agent với kết quả từ các Agent con
     master_result_json = await run_master_agent(ticker, current_price, tech_result, fa_result, macro_result)
