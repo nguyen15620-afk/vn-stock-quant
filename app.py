@@ -20,74 +20,10 @@ from ai_agents import analyze_stock_async, configure_gemini
 
 st.title("⚡ Trợ lý AI Giao dịch Chứng khoán (Gemini Pro)")
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_available_models(api_key, free_tier_mode=True):
-    api_key = api_key.strip()
-    if not api_key:
-        return ["Vui lòng nhập API Key trước"]
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        import re
-        raw_models = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                raw_models.append(m.name.replace('models/', ''))
-        
-        if not raw_models:
-            return ["Lỗi: Không tìm thấy model nào hỗ trợ generateContent cho API Key này"]
-            
-        models = []
-        for name in raw_models:
-            if re.search(r'-\d{3}$', name):
-                continue
-            if 'gemini' not in name:
-                continue
-            if name.endswith('-latest'):
-                base = name.replace('-latest', '')
-                if base in raw_models:
-                    continue
-                    
-            # Bộ lọc an toàn cho Free Tier: Ẩn các model Pro đời cao (thường bị khóa limit=0)
-            if free_tier_mode:
-                if 'pro' in name and ('3' in name or '2' in name):
-                    continue
-                    
-            models.append(name)
-            
-        models = sorted(models, key=lambda x: ('flash' not in x, x))
-        return models
-    except Exception as e:
-        return [f"Lỗi API: {str(e)}"]
-
 api_key_input = st.text_input("🔑 Nhập Google GenAI API Key:", type="password", placeholder="Paste API Key của bạn vào đây...")
 if api_key_input:
     api_key_input = api_key_input.strip()
 
-with st.expander("⚙️ Tùy chỉnh Model AI cho từng Đặc vụ", expanded=True):
-    free_tier_mode = st.checkbox("🟢 Chế độ an toàn Miễn phí (Ẩn các model cao cấp bị khóa Limit=0)", value=True)
-    
-    if api_key_input:
-        model_list = get_available_models(api_key_input, free_tier_mode)
-    else:
-        model_list = ["Vui lòng nhập API Key trước"]
-        
-    st.caption("Danh sách Model được tự động quét dựa trên API Key của bạn.")
-    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-    with col_m1:
-        tech_m = st.selectbox("👨‍💻 Kỹ thuật", model_list, index=0)
-    with col_m2:
-        fa_m = st.selectbox("👔 Cơ bản", model_list, index=0)
-    with col_m3:
-        macro_m = st.selectbox("🌐 Vĩ mô", model_list, index=0)
-    with col_m4:
-        # Nếu có model pro thì chọn pro làm mặc định, nếu không lấy model cuối cùng
-        default_master_idx = 0
-        for i, m in enumerate(model_list):
-            if 'pro' in m:
-                default_master_idx = i
-                break
-        master_m = st.selectbox("🎯 Sếp (Master)", model_list, index=default_master_idx)
 # Input Section
 col_input1, col_input2, col_input3 = st.columns([1, 1, 2])
 with col_input1:
@@ -98,15 +34,15 @@ with col_input3:
     st.write("")
     st.write("")
     analyze_btn = st.button("🚀 Phân tích Đa chiều (Multi-Agent)", type="primary")
-    st.caption("⚠️ Lưu ý: Bản Free của Gemini 3.x chỉ cho phép 5 request/phút. Bạn chỉ nên ấn 1 lần mỗi phút.")
+    st.caption("⚡ Hệ thống tích hợp Smart Rate Limiter: Tự động điều phối lưu lượng không lo lỗi 429!")
 
 if analyze_btn:
     if not api_key_input:
         st.error("⚠️ Bạn cần nhập API Key để chạy AI Agents!")
         st.stop()
         
-    # Cấu hình Gemini với API Key và 4 Model người dùng chọn
-    configure_gemini(api_key_input, tech_m, fa_m, macro_m, master_m)
+    # Cấu hình Gemini với API Key và tự động cấp phát Model (Dynamic Model Manager)
+    configure_gemini(api_key_input)
     
     # UX Tối ưu: Trạng thái chờ
     status = st.status("🔍 Đang tiến hành lấy dữ liệu và phân tích...", expanded=True)

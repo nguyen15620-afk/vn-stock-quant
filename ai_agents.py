@@ -3,7 +3,8 @@ import asyncio
 import google.generativeai as genai
 from dotenv import load_dotenv
 import json
-from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
+from tenacity import retry, wait_exponential, stop_after_attempt
+import llm_manager
 
 from schema import MasterAgentResponse
 
@@ -12,8 +13,9 @@ tech_model = None
 fa_model = None
 macro_model = None
 master_model = None
+flash_model_name = None
 
-def configure_gemini(api_key: str, tech_m: str, fa_m: str, macro_m: str, master_m: str):
+def configure_gemini(api_key: str):
     global tech_model, fa_model, macro_model, master_model
     
     if not api_key:
@@ -23,21 +25,27 @@ def configure_gemini(api_key: str, tech_m: str, fa_m: str, macro_m: str, master_
     
     # Khởi tạo mô hình sau khi configure
     try:
-        tech_model = genai.GenerativeModel(tech_m)
-        fa_model = genai.GenerativeModel(fa_m)
-        macro_model = genai.GenerativeModel(macro_m)
-        master_model = genai.GenerativeModel(master_m)
+        global flash_model_name
+        flash_model_name = llm_manager.get_best_available_model(api_key, tier="flash")
+        pro_model_name = llm_manager.get_best_available_model(api_key, tier="pro")
+        
+        tech_model = genai.GenerativeModel(flash_model_name)
+        fa_model = genai.GenerativeModel(flash_model_name)
+        macro_model = genai.GenerativeModel(flash_model_name)
+        master_model = genai.GenerativeModel(pro_model_name)
     except Exception as e:
         print(f"Error initializing models: {e}")
 
 # Giảm thời gian chờ retry để báo lỗi nhanh hơn nếu cấu hình sai
 @retry(wait=wait_exponential(multiplier=1, min=1, max=3), stop=stop_after_attempt(2), reraise=True)
-async def fetch_gemini_response(model, prompt, generation_config=None):
-    if generation_config:
-        response = await model.generate_content_async(prompt, generation_config=generation_config)
-    else:
-        response = await model.generate_content_async(prompt)
-    return response.text
+async def fetch_gemini_response(model, prompt, is_pro=False, generation_config=None):
+    limiter = llm_manager.pro_limiter if is_pro else llm_manager.flash_limiter
+    async with limiter:
+        if generation_config:
+            response = await model.generate_content_async(prompt, generation_config=generation_config)
+        else:
+            response = await model.generate_content_async(prompt)
+        return response.text
 
 async def run_technical_agent(ticker: str, tech_data: str) -> str:
     """Agent Phân tích Kỹ thuật"""
@@ -123,32 +131,35 @@ async def run_master_agent(ticker: str, current_price: float, tech_analysis: str
             response_mime_type="application/json",
             response_schema=MasterAgentResponse
         )
-        return await fetch_gemini_response(master_model, prompt, gen_config)
+        return await fetch_gemini_response(master_model, prompt, is_pro=True, generation_config=gen_config)
     except Exception as e:
-        # Fallback in case of ultimate failure (API completely down)
-        print(f"Master Agent completely failed: {e}")
-        fallback = {
-            "recommendation": "LỖI HỆ THỐNG",
-            "allocation_pct": 0,
-            "stop_loss": 0.0,
-            "take_profit": 0.0,
-            "reasoning": f"Tất cả các nỗ lực kết nối Master Agent đều thất bại: {e}",
-            "market_sentiment": "Unknown"
-        }
-        return json.dumps(fallback)
+        print(f"Master Agent failed with PRO model: {e}")
+        print("⚠️ Bắt đầu Auto-Fallback sang model Flash...")
+        try:
+            # Fallback sang Flash model (is_pro=False)
+            fallback_model = genai.GenerativeModel(flash_model_name)
+            return await fetch_gemini_response(fallback_model, prompt, is_pro=False, generation_config=gen_config)
+        except Exception as e2:
+            print(f"Master Agent completely failed after fallback: {e2}")
+            fallback = {
+                "recommendation": "LỖI HỆ THỐNG",
+                "allocation_pct": 0,
+                "stop_loss": 0.0,
+                "take_profit": 0.0,
+                "reasoning": f"Tất cả các nỗ lực kết nối Master Agent đều thất bại: {e2}",
+                "market_sentiment": "Unknown"
+            }
+            return json.dumps(fallback)
 
 async def analyze_stock_async(ticker: str, current_price: float, tech_data: str, fa_data: str, market_data: str) -> dict:
     """Hàm main để chạy song song 3 Agent con, sau đó gọi Master Agent"""
     
-    # 1. Chạy tuần tự từng Agent con (Tránh lỗi 429 Rate Limit của bản Miễn phí)
-    tech_result = await run_technical_agent(ticker, tech_data)
-    await asyncio.sleep(2) # Nghỉ 2s giữa các request
+    # 1. Chạy song song 3 Agent con (Rate Limit đã được aiolimiter quản lý tự động)
+    tech_task = asyncio.create_task(run_technical_agent(ticker, tech_data))
+    fa_task = asyncio.create_task(run_fundamental_agent(ticker, fa_data))
+    macro_task = asyncio.create_task(run_macro_agent(ticker, market_data))
     
-    fa_result = await run_fundamental_agent(ticker, fa_data)
-    await asyncio.sleep(2)
-    
-    macro_result = await run_macro_agent(ticker, market_data)
-    await asyncio.sleep(2)
+    tech_result, fa_result, macro_result = await asyncio.gather(tech_task, fa_task, macro_task)
     
     # 2. Gọi Master Agent với kết quả từ các Agent con
     master_result_json = await run_master_agent(ticker, current_price, tech_result, fa_result, macro_result)
