@@ -16,7 +16,7 @@ st.set_page_config(page_title="VN Stock AI Minimalist", layout="wide")
 from data_loader import load_historical_data
 from data_fetcher import get_fundamental_data, get_macro_flow
 from strategy import compute_indicators
-from ai_agents import analyze_stock_async, configure_gemini
+from ai_agents import analyze_stock_async, configure_gemini, QuotaExceededError
 
 st.title("⚡ Trợ lý AI Giao dịch Chứng khoán (Gemini Pro)")
 
@@ -65,8 +65,8 @@ if analyze_btn:
         df = compute_indicators(df)
         current_price = df.iloc[-1]['close']
         
-        # Prepare data strings for AI
-        tech_data_str = df[['time', 'close', 'volume', 'rsi', 'macd_hist']].tail(10).to_string(index=False)
+        # Prepare data strings for AI (Nén dữ liệu để tối ưu Input Token)
+        tech_data_str = df[['time', 'close', 'volume', 'rsi', 'macd_hist']].tail(30).to_string(index=False)
         fa_data_str = json.dumps(fa_data, ensure_ascii=False) if isinstance(fa_data, dict) else str(fa_data)
         
         st.write("🧠 Khởi chạy Multi-Agent AI (Technical, Fundamental, Macro)...")
@@ -82,6 +82,10 @@ if analyze_btn:
                 market_data=market_data_str
             ))
             status.update(label="✅ Phân tích hoàn tất!", state="complete", expanded=False)
+        except QuotaExceededError as qe:
+            status.update(label="❌ Lỗi: Hết tài nguyên (Quota Exceeded)", state="error")
+            st.error("⚠️ Hệ thống đã dùng hết tài nguyên AI miễn phí trong ngày (hoặc phút). Vui lòng chờ một lát rồi thử lại, hoặc nâng cấp API Key.")
+            st.stop()
         except Exception as e:
             status.update(label="❌ Lỗi trong quá trình chạy AI", state="error")
             st.error(f"Lỗi khi chạy AI Agents: {e}")

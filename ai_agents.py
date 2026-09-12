@@ -8,6 +8,10 @@ import llm_manager
 
 from schema import MasterAgentResponse
 
+class QuotaExceededError(Exception):
+    """Lỗi khi tài khoản đã vượt quá giới hạn truy cập (Rate Limit) hoặc không được cấp phép (Quota 0)"""
+    pass
+
 # Global model variables
 tech_model = None
 fa_model = None
@@ -41,11 +45,17 @@ def configure_gemini(api_key: str):
 async def fetch_gemini_response(model, prompt, is_pro=False, generation_config=None):
     limiter = llm_manager.pro_limiter if is_pro else llm_manager.flash_limiter
     async with limiter:
-        if generation_config:
-            response = await model.generate_content_async(prompt, generation_config=generation_config)
-        else:
-            response = await model.generate_content_async(prompt)
-        return response.text
+        try:
+            if generation_config:
+                response = await model.generate_content_async(prompt, generation_config=generation_config)
+            else:
+                response = await model.generate_content_async(prompt)
+            return response.text
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "quota exceeded" in error_msg or "limit: 0" in error_msg or "429" in error_msg:
+                raise QuotaExceededError(f"API Quota bị từ chối: {str(e)}")
+            raise e
 
 async def run_technical_agent(ticker: str, tech_data: str) -> str:
     """Agent Phân tích Kỹ thuật"""
@@ -60,6 +70,8 @@ async def run_technical_agent(ticker: str, tech_data: str) -> str:
     """
     try:
         return await fetch_gemini_response(tech_model, prompt)
+    except QuotaExceededError as qe:
+        raise qe
     except Exception as e:
         print(f"Technical Agent failed after retries: {e}")
         return "⚠️ Dữ liệu Phân tích Kỹ thuật tạm thời không khả dụng do lỗi API/Mạng. Master Agent hãy bỏ qua phần này."
@@ -77,6 +89,8 @@ async def run_fundamental_agent(ticker: str, fa_data: str) -> str:
     """
     try:
         return await fetch_gemini_response(fa_model, prompt)
+    except QuotaExceededError as qe:
+        raise qe
     except Exception as e:
         print(f"Fundamental Agent failed after retries: {e}")
         return "⚠️ Dữ liệu Phân tích Cơ bản tạm thời không khả dụng do lỗi API/Mạng. Master Agent hãy bỏ qua phần này."
@@ -94,6 +108,8 @@ async def run_macro_agent(ticker: str, market_data: str) -> str:
     """
     try:
         return await fetch_gemini_response(macro_model, prompt)
+    except QuotaExceededError as qe:
+        raise qe
     except Exception as e:
         print(f"Macro Agent failed after retries: {e}")
         return "⚠️ Dữ liệu Phân tích Vĩ mô tạm thời không khả dụng do lỗi API/Mạng. Master Agent hãy bỏ qua phần này."
@@ -132,6 +148,27 @@ async def run_master_agent(ticker: str, current_price: float, tech_analysis: str
             response_schema=MasterAgentResponse
         )
         return await fetch_gemini_response(master_model, prompt, is_pro=True, generation_config=gen_config)
+    except QuotaExceededError as qe:
+        # Nếu Pro bị lỗi Quota thì tiến hành Fallback, không throw lỗi ra ngoài
+        print(f"Master Agent hit Quota Limit with PRO model: {qe}")
+        print("⚠️ Bắt đầu Auto-Fallback sang model Flash...")
+        try:
+            fallback_model = genai.GenerativeModel(flash_model_name)
+            return await fetch_gemini_response(fallback_model, prompt, is_pro=False, generation_config=gen_config)
+        except QuotaExceededError as fallback_qe:
+            # Ngay cả bản Flash cũng báo lỗi Quota (hết Token hằng ngày), chúng ta sẽ throw nó ra UI
+            raise fallback_qe
+        except Exception as e2:
+            print(f"Master Agent completely failed after fallback: {e2}")
+            fallback = {
+                "recommendation": "LỖI HỆ THỐNG",
+                "allocation_pct": 0,
+                "stop_loss": 0.0,
+                "take_profit": 0.0,
+                "reasoning": f"Tất cả các nỗ lực kết nối Master Agent đều thất bại: {e2}",
+                "market_sentiment": "Unknown"
+            }
+            return json.dumps(fallback)
     except Exception as e:
         print(f"Master Agent failed with PRO model: {e}")
         print("⚠️ Bắt đầu Auto-Fallback sang model Flash...")
