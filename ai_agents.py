@@ -13,7 +13,7 @@ fa_model = None
 macro_model = None
 master_model = None
 
-def configure_gemini(api_key: str, model_name: str = "gemini-1.5-flash"):
+def configure_gemini(api_key: str, tech_m: str, fa_m: str, macro_m: str, master_m: str):
     global tech_model, fa_model, macro_model, master_model
     
     if not api_key:
@@ -23,10 +23,10 @@ def configure_gemini(api_key: str, model_name: str = "gemini-1.5-flash"):
     
     # Khởi tạo mô hình sau khi configure
     try:
-        tech_model = genai.GenerativeModel(model_name)
-        fa_model = genai.GenerativeModel(model_name)
-        macro_model = genai.GenerativeModel(model_name)
-        master_model = genai.GenerativeModel(model_name)
+        tech_model = genai.GenerativeModel(tech_m)
+        fa_model = genai.GenerativeModel(fa_m)
+        macro_model = genai.GenerativeModel(macro_m)
+        master_model = genai.GenerativeModel(master_m)
     except Exception as e:
         print(f"Error initializing models: {e}")
 
