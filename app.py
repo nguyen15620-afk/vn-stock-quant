@@ -42,6 +42,7 @@ with col_input3:
     st.write("")
     st.write("")
     analyze_btn = st.button("🚀 Phân tích Đa chiều (Multi-Agent)", type="primary")
+    st.caption("⚠️ Lưu ý: Bản Free của Gemini 3.x chỉ cho phép 5 request/phút. Bạn chỉ nên ấn 1 lần mỗi phút.")
 
 if analyze_btn:
     if not api_key_input:
