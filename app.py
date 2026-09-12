@@ -20,8 +20,11 @@ from ai_agents import analyze_stock_async, configure_gemini
 
 st.title("⚡ Trợ lý AI Giao dịch Chứng khoán (Gemini Pro)")
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_available_models(api_key):
+    api_key = api_key.strip()
+    if not api_key:
+        return ["Vui lòng nhập API Key trước"]
     try:
         import google.generativeai as genai
         genai.configure(api_key=api_key)
@@ -30,21 +33,25 @@ def get_available_models(api_key):
             if 'generateContent' in m.supported_generation_methods:
                 models.append(m.name.replace('models/', ''))
         
-        # Sắp xếp ưu tiên flash lên đầu
+        if not models:
+            return ["Lỗi: Không tìm thấy model nào hỗ trợ generateContent cho API Key này"]
+            
         models = sorted(models, key=lambda x: ('flash' not in x, x))
-        return models if models else ["gemini-3.5-flash", "gemini-3.8-flash"]
-    except:
-        return ["gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.1-pro"]
+        return models
+    except Exception as e:
+        return [f"Lỗi API: {str(e)}"]
 
 api_key_input = st.text_input("🔑 Nhập Google GenAI API Key:", type="password", placeholder="Paste API Key của bạn vào đây...")
+if api_key_input:
+    api_key_input = api_key_input.strip()
 
-with st.expander("⚙️ Tùy chỉnh Model AI cho từng Đặc vụ"):
+with st.expander("⚙️ Tùy chỉnh Model AI cho từng Đặc vụ", expanded=True):
     if api_key_input:
         model_list = get_available_models(api_key_input)
     else:
         model_list = ["Vui lòng nhập API Key trước"]
         
-    st.caption("Mẹo: Hãy dùng dòng Flash cho 3 đặc vụ phụ tá để quét dữ liệu nhanh, và dùng dòng Pro cho Master Agent để chốt quyết định cuối cùng!")
+    st.caption("Danh sách Model được tự động quét dựa trên API Key của bạn.")
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
     with col_m1:
         tech_m = st.selectbox("👨‍💻 Kỹ thuật", model_list, index=0)
