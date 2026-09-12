@@ -28,13 +28,29 @@ def get_available_models(api_key):
     try:
         import google.generativeai as genai
         genai.configure(api_key=api_key)
-        models = []
+        import re
+        raw_models = []
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
-                models.append(m.name.replace('models/', ''))
+                raw_models.append(m.name.replace('models/', ''))
         
-        if not models:
+        if not raw_models:
             return ["Lỗi: Không tìm thấy model nào hỗ trợ generateContent cho API Key này"]
+            
+        models = []
+        for name in raw_models:
+            # Bỏ qua các model cũ có số phiên bản cụ thể (ví dụ: -001, -002)
+            if re.search(r'-\d{3}$', name):
+                continue
+            # Bỏ qua các model không phải gemini (như embedding, bison)
+            if 'gemini' not in name:
+                continue
+            # Bỏ qua bản -latest nếu đã có bản gốc (ví dụ: bỏ gemini-1.5-flash-latest nếu đã có gemini-1.5-flash)
+            if name.endswith('-latest'):
+                base = name.replace('-latest', '')
+                if base in raw_models:
+                    continue
+            models.append(name)
             
         models = sorted(models, key=lambda x: ('flash' not in x, x))
         return models
