@@ -8,3 +8,5 @@ requests
 yfinance
 schedule
 python-dotenv
+tenacity
+google-generativeai
