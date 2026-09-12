@@ -20,26 +20,46 @@ from ai_agents import analyze_stock_async, configure_gemini
 
 st.title("⚡ Trợ lý AI Giao dịch Chứng khoán (Gemini Pro)")
 
+@st.cache_data(ttl=3600)
+def get_available_models(api_key):
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        models = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                models.append(m.name.replace('models/', ''))
+        
+        # Sắp xếp ưu tiên flash lên đầu
+        models = sorted(models, key=lambda x: ('flash' not in x, x))
+        return models if models else ["gemini-3.5-flash", "gemini-3.8-flash"]
+    except:
+        return ["gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.1-pro"]
+
 api_key_input = st.text_input("🔑 Nhập Google GenAI API Key:", type="password", placeholder="Paste API Key của bạn vào đây...")
 
 with st.expander("⚙️ Tùy chỉnh Model AI cho từng Đặc vụ"):
-    model_list = [
-        "gemini-3.5-flash", 
-        "gemini-3.8-flash", 
-        "gemini-3.1-pro", 
-        "gemini-1.5-flash", 
-        "gemini-1.5-pro"
-    ]
+    if api_key_input:
+        model_list = get_available_models(api_key_input)
+    else:
+        model_list = ["Vui lòng nhập API Key trước"]
+        
     st.caption("Mẹo: Hãy dùng dòng Flash cho 3 đặc vụ phụ tá để quét dữ liệu nhanh, và dùng dòng Pro cho Master Agent để chốt quyết định cuối cùng!")
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
     with col_m1:
-        tech_m = st.selectbox("👨‍💻 Kỹ thuật", model_list, index=0) # 3.5-flash
+        tech_m = st.selectbox("👨‍💻 Kỹ thuật", model_list, index=0)
     with col_m2:
-        fa_m = st.selectbox("👔 Cơ bản", model_list, index=0) # 3.5-flash
+        fa_m = st.selectbox("👔 Cơ bản", model_list, index=0)
     with col_m3:
-        macro_m = st.selectbox("🌐 Vĩ mô", model_list, index=0) # 3.5-flash
+        macro_m = st.selectbox("🌐 Vĩ mô", model_list, index=0)
     with col_m4:
-        master_m = st.selectbox("🎯 Sếp (Master)", model_list, index=2) # 3.1-pro
+        # Nếu có model pro thì chọn pro làm mặc định, nếu không lấy model cuối cùng
+        default_master_idx = 0
+        for i, m in enumerate(model_list):
+            if 'pro' in m:
+                default_master_idx = i
+                break
+        master_m = st.selectbox("🎯 Sếp (Master)", model_list, index=default_master_idx)
 # Input Section
 col_input1, col_input2, col_input3 = st.columns([1, 1, 2])
 with col_input1:
