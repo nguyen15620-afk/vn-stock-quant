@@ -114,11 +114,13 @@ async def run_macro_agent(ticker: str, market_data: str) -> str:
         print(f"Macro Agent failed after retries: {e}")
         return "⚠️ Dữ liệu Phân tích Vĩ mô tạm thời không khả dụng do lỗi API/Mạng. Master Agent hãy bỏ qua phần này."
 
-async def run_master_agent(ticker: str, current_price: float, tech_analysis: str, fa_analysis: str, macro_analysis: str) -> str:
+async def run_master_agent(ticker: str, current_price: float, tech_analysis: str, fa_analysis: str, macro_analysis: str, risk_profile: str = "Cân bằng") -> str:
     """Master Agent: Tổng hợp và ra Quyết định (Hỗ trợ Graceful Degradation)"""
     prompt = f"""
     Bạn là Master Agent (Giám đốc Đầu tư - CIO) của một quỹ đầu tư tại Việt Nam.
     Bạn đang xem xét mã cổ phiếu {ticker} với mức giá hiện tại là {current_price} VND.
+    
+    Khẩu vị rủi ro (Risk Profile) của nhà đầu tư: {risk_profile}.
     
     Báo cáo từ 3 chuyên viên:
     
@@ -135,8 +137,8 @@ async def run_master_agent(ticker: str, current_price: float, tech_analysis: str
     
     Nhiệm vụ:
     - Đưa ra Khuyến nghị cuối cùng (MUA, BÁN, hoặc NẮM GIỮ).
-    - Xác định tỷ trọng giải ngân phù hợp (0-100%).
-    - Đề xuất mức giá cắt lỗ (Stop-loss) và chốt lời (Take-profit) logic so với giá hiện tại.
+    - HÃY TỰ ĐỘNG ĐIỀU CHỈNH Tỷ trọng giải ngân phù hợp với Khẩu vị rủi ro: {risk_profile} (Thận trọng: Tỷ trọng thấp, Mạo hiểm: Tỷ trọng cao).
+    - HÃY TỰ ĐỘNG ĐIỀU CHỈNH mức giá Cắt lỗ (Stop-loss) và Chốt lời (Take-profit) linh hoạt theo Khẩu vị rủi ro: {risk_profile}. (VD: Thận trọng -> Stop-loss ngắn 3-5%. Mạo hiểm -> Stop-loss nới lỏng 8-10% để đón sóng).
     - Cung cấp Lý do rõ ràng.
     
     Yêu cầu định dạng đầu ra:
@@ -188,7 +190,7 @@ async def run_master_agent(ticker: str, current_price: float, tech_analysis: str
             }
             return json.dumps(fallback)
 
-async def analyze_stock_async(ticker: str, current_price: float, tech_data: str, fa_data: str, market_data: str) -> dict:
+async def analyze_stock_async(ticker: str, current_price: float, tech_data: str, fa_data: str, market_data: str, risk_profile: str = "Cân bằng") -> dict:
     """Hàm main để chạy song song 3 Agent con, sau đó gọi Master Agent"""
     
     # 1. Chạy song song 3 Agent con (Rate Limit đã được aiolimiter quản lý tự động)
@@ -199,7 +201,7 @@ async def analyze_stock_async(ticker: str, current_price: float, tech_data: str,
     tech_result, fa_result, macro_result = await asyncio.gather(tech_task, fa_task, macro_task)
     
     # 2. Gọi Master Agent với kết quả từ các Agent con
-    master_result_json = await run_master_agent(ticker, current_price, tech_result, fa_result, macro_result)
+    master_result_json = await run_master_agent(ticker, current_price, tech_result, fa_result, macro_result, risk_profile)
     
     try:
         master_data = json.loads(master_result_json)
