@@ -19,6 +19,66 @@ from strategy import compute_indicators
 from ai_agents import analyze_stock_async, configure_gemini, QuotaExceededError
 from notifier import send_telegram_alert
 
+async def process_entire_watchlist(tickers, risk_profile, months, enable_telegram, status_container):
+    summary_data = []
+    detailed_results = {}
+    
+    for ticker in tickers:
+        status_container.write(f"▶️ Bắt đầu phân tích {ticker}...")
+        
+        df = load_historical_data(ticker, months=months)
+        fa_data = get_fundamental_data(ticker)
+        market_data_str = get_macro_flow()
+        
+        if df.empty:
+            status_container.error(f"Không thể tải dữ liệu cho mã {ticker}. Bỏ qua.")
+            continue
+            
+        df = compute_indicators(df)
+        current_price = df.iloc[-1]['close']
+        
+        tech_data_str = df[['time', 'close', 'volume', 'rsi', 'macd_hist']].tail(30).to_string(index=False)
+        fa_data_str = json.dumps(fa_data, ensure_ascii=False) if isinstance(fa_data, dict) else str(fa_data)
+        
+        try:
+            ai_results = await analyze_stock_async(
+                ticker=ticker, 
+                current_price=current_price, 
+                tech_data=tech_data_str, 
+                fa_data=fa_data_str, 
+                market_data=market_data_str,
+                risk_profile=risk_profile
+            )
+        except QuotaExceededError as qe:
+            status_container.error(f"⚠️ Hết tài nguyên (Quota Exceeded) khi phân tích {ticker}. Dừng tiến trình.")
+            break
+        except Exception as e:
+            status_container.error(f"Lỗi khi chạy AI cho {ticker}: {e}")
+            continue
+            
+        master = ai_results.get("master_decision", {})
+        rec = master.get("recommendation", "N/A").upper()
+        
+        summary_data.append({
+            "Mã CP": ticker,
+            "Khuyến nghị": rec,
+            "Tỷ trọng (%)": master.get("allocation_pct", 0),
+            "Cắt lỗ (SL)": master.get("stop_loss", 0),
+            "Chốt lời (TP)": master.get("take_profit", 0)
+        })
+        
+        detailed_results[ticker] = {
+            "ai_results": ai_results,
+            "df": df,
+            "master": master
+        }
+        
+        # Gửi thông báo Telegram
+        if enable_telegram and rec == "MUA":
+            send_telegram_alert(ticker, rec, master.get("reasoning", ""))
+            
+    return summary_data, detailed_results
+
 st.title("⚡ Trợ lý AI Giao dịch Chứng khoán (Gemini Pro)")
 
 api_key_input = st.text_input("🔑 Nhập Google GenAI API Key:", type="password", placeholder="Paste API Key của bạn vào đây...")
@@ -60,66 +120,11 @@ if analyze_btn:
         st.error("⚠️ Vui lòng nhập ít nhất 1 mã cổ phiếu hợp lệ.")
         st.stop()
 
-    summary_data = []
-    detailed_results = {}
-    
     status = st.status(f"🔍 Đang phân tích Watchlist {len(tickers)} mã...", expanded=True)
-    with status:
-        for ticker in tickers:
-            st.write(f"▶️ Bắt đầu phân tích {ticker}...")
-            
-            df = load_historical_data(ticker, months=months)
-            fa_data = get_fundamental_data(ticker)
-            market_data_str = get_macro_flow()
-            
-            if df.empty:
-                st.error(f"Không thể tải dữ liệu cho mã {ticker}. Bỏ qua.")
-                continue
-                
-            df = compute_indicators(df)
-            current_price = df.iloc[-1]['close']
-            
-            tech_data_str = df[['time', 'close', 'volume', 'rsi', 'macd_hist']].tail(30).to_string(index=False)
-            fa_data_str = json.dumps(fa_data, ensure_ascii=False) if isinstance(fa_data, dict) else str(fa_data)
-            
-            try:
-                ai_results = asyncio.run(analyze_stock_async(
-                    ticker=ticker, 
-                    current_price=current_price, 
-                    tech_data=tech_data_str, 
-                    fa_data=fa_data_str, 
-                    market_data=market_data_str,
-                    risk_profile=risk_profile
-                ))
-            except QuotaExceededError as qe:
-                st.error(f"⚠️ Hết tài nguyên (Quota Exceeded) khi phân tích {ticker}. Dừng tiến trình.")
-                break
-            except Exception as e:
-                st.error(f"Lỗi khi chạy AI cho {ticker}: {e}")
-                continue
-                
-            master = ai_results.get("master_decision", {})
-            rec = master.get("recommendation", "N/A").upper()
-            
-            summary_data.append({
-                "Mã CP": ticker,
-                "Khuyến nghị": rec,
-                "Tỷ trọng (%)": master.get("allocation_pct", 0),
-                "Cắt lỗ (SL)": master.get("stop_loss", 0),
-                "Chốt lời (TP)": master.get("take_profit", 0)
-            })
-            
-            detailed_results[ticker] = {
-                "ai_results": ai_results,
-                "df": df,
-                "master": master
-            }
-            
-            # Gửi thông báo Telegram
-            if enable_telegram and rec == "MUA":
-                send_telegram_alert(ticker, rec, master.get("reasoning", ""))
-                
-        status.update(label="✅ Đã hoàn tất phân tích Watchlist!", state="complete", expanded=False)
+    summary_data, detailed_results = asyncio.run(
+        process_entire_watchlist(tickers, risk_profile, months, enable_telegram, status)
+    )
+    status.update(label="✅ Đã hoàn tất phân tích Watchlist!", state="complete", expanded=False)
         
     st.markdown("---")
     st.subheader("📋 Bảng Tổng hợp Watchlist")
