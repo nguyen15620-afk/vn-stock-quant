@@ -2,11 +2,21 @@ import google.generativeai as genai
 import re
 from aiolimiter import AsyncLimiter
 
-# Global rate limiters (Token Bucket)
-# Flash models: Free Tier limit is 15 RPM
-flash_limiter = AsyncLimiter(15, 60)
-# Pro models: Free Tier limit is 2 RPM
-pro_limiter = AsyncLimiter(2, 60)
+import asyncio
+
+_limiters = {}
+
+def get_flash_limiter():
+    loop = asyncio.get_running_loop()
+    if loop not in _limiters:
+        _limiters[loop] = {'flash': AsyncLimiter(15, 60), 'pro': AsyncLimiter(2, 60)}
+    return _limiters[loop]['flash']
+
+def get_pro_limiter():
+    loop = asyncio.get_running_loop()
+    if loop not in _limiters:
+        _limiters[loop] = {'flash': AsyncLimiter(15, 60), 'pro': AsyncLimiter(2, 60)}
+    return _limiters[loop]['pro']
 
 def get_best_available_model(api_key: str, tier: str = "flash") -> str:
     """Bulletproof Model Scanner: Hỏi trực tiếp máy chủ Google để lấy model hợp lệ nhất"""

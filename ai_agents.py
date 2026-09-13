@@ -43,7 +43,7 @@ def configure_gemini(api_key: str):
 # Giảm thời gian chờ retry để báo lỗi nhanh hơn nếu cấu hình sai
 @retry(wait=wait_exponential(multiplier=1, min=1, max=3), stop=stop_after_attempt(2), reraise=True)
 async def fetch_gemini_response(model, prompt, is_pro=False, generation_config=None):
-    limiter = llm_manager.pro_limiter if is_pro else llm_manager.flash_limiter
+    limiter = llm_manager.get_pro_limiter() if is_pro else llm_manager.get_flash_limiter()
     async with limiter:
         try:
             if generation_config:
