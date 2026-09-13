@@ -14,7 +14,7 @@ load_dotenv()
 st.set_page_config(page_title="VN Stock AI Minimalist", layout="wide")
 
 from data_loader import load_historical_data
-from data_fetcher import get_fundamental_data, get_macro_flow
+from data_fetcher import get_fundamental_data, get_macro_flow, get_latest_news
 from strategy import compute_indicators
 from ai_agents import analyze_stock_async, configure_gemini, QuotaExceededError
 from notifier import send_telegram_alert
@@ -29,6 +29,7 @@ async def process_entire_watchlist(tickers, risk_profile, months, enable_telegra
         df = load_historical_data(ticker, months=months)
         fa_data = get_fundamental_data(ticker)
         market_data_str = get_macro_flow()
+        news_data_str = get_latest_news(ticker)
         
         if df.empty:
             status_container.error(f"Không thể tải dữ liệu cho mã {ticker}. Bỏ qua.")
@@ -47,6 +48,7 @@ async def process_entire_watchlist(tickers, risk_profile, months, enable_telegra
                 tech_data=tech_data_str, 
                 fa_data=fa_data_str, 
                 market_data=market_data_str,
+                news_data=news_data_str,
                 risk_profile=risk_profile
             )
         except QuotaExceededError as qe:
@@ -59,9 +61,16 @@ async def process_entire_watchlist(tickers, risk_profile, months, enable_telegra
         master = ai_results.get("master_decision", {})
         rec = master.get("recommendation", "N/A").upper()
         
+        order_action = master.get("order_action", rec).upper()
+        target_price = master.get("target_price", current_price)
+        volume_percent = master.get("volume_percent", master.get("allocation_pct", 0))
+        
+        tcinvest_action = f"{ticker} - {order_action} - Tỷ trọng: {volume_percent}% - Giá: {target_price}"
+        
         summary_data.append({
             "Mã CP": ticker,
             "Khuyến nghị": rec,
+            "Action (TCInvest Order)": tcinvest_action,
             "Tỷ trọng (%)": master.get("allocation_pct", 0),
             "Cắt lỗ (SL)": master.get("stop_loss", 0),
             "Chốt lời (TP)": master.get("take_profit", 0)
@@ -131,9 +140,23 @@ if analyze_btn:
     if summary_data:
         summary_df = pd.DataFrame(summary_data)
         def style_rec(val):
-            color = 'green' if val == 'MUA' else 'red' if val == 'BÁN' else 'gray'
-            return f'color: {color}; font-weight: bold'
-        st.dataframe(summary_df.style.map(style_rec, subset=['Khuyến nghị']), use_container_width=True)
+            if val == 'MUA': return 'background-color: #d4edda; color: #155724; font-weight: bold'
+            if val == 'BÁN': return 'background-color: #f8d7da; color: #721c24; font-weight: bold'
+            return 'background-color: #e2e3e5; color: #383d41; font-weight: bold'
+            
+        styled_df = summary_df.style.map(style_rec, subset=['Khuyến nghị'])
+        
+        st.dataframe(
+            styled_df, 
+            use_container_width=True,
+            column_config={
+                "Action (TCInvest Order)": st.column_config.TextColumn(
+                    "Action (TCInvest Order)",
+                    help="Copy & paste cú pháp này trực tiếp vào ứng dụng TCInvest (TCBS)",
+                    width="large"
+                )
+            }
+        )
     else:
         st.warning("Không có dữ liệu phân tích nào thành công.")
         

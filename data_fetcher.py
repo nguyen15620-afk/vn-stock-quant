@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import traceback
+import requests
+from bs4 import BeautifulSoup
 
 # Cố gắng import vnstock
 try:
@@ -77,3 +79,41 @@ def get_macro_flow() -> str:
     except Exception as e:
         print(f"Lỗi lấy dữ liệu Vĩ mô vnstock: {e}")
         return f"Lỗi cào dữ liệu VNINDEX: {str(e)}"
+
+@st.cache_data(ttl=600)
+def get_latest_news(ticker: str) -> str:
+    """
+    Cào tin tức mới nhất từ RSS Feed của CafeF.
+    Lưu tối đa 5 tin, mỗi tin lấy Title và Description.
+    """
+    url = f"https://cafef.vn/rss/{ticker}.rss"
+    try:
+        response = requests.get(url, timeout=5)
+        if response.status_code != 200:
+            return ""
+            
+        soup = BeautifulSoup(response.content, "xml")
+        items = soup.find_all("item")
+        
+        if not items:
+            return ""
+            
+        news_texts = []
+        for i, item in enumerate(items):
+            if i >= 5: # Lấy tối đa 5 tin
+                break
+                
+            title = item.title.text if item.title else ""
+            desc = item.description.text if item.description else ""
+            # CafeF hay nhúng CDATA/HTML vào description, BeautifulSoup xml parse đôi khi giữ nguyên text.
+            # Lọc bỏ HTML nếu cần (tuỳ chọn)
+            desc_clean = BeautifulSoup(desc, "html.parser").get_text() if desc else ""
+            
+            if title:
+                news_texts.append(f"- {title}: {desc_clean}")
+                
+        return "\n".join(news_texts)
+        
+    except Exception as e:
+        print(f"Lỗi cào tin tức {ticker}: {e}")
+        return ""

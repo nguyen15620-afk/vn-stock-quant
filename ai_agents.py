@@ -95,16 +95,19 @@ async def run_fundamental_agent(ticker: str, fa_data: str) -> str:
         print(f"Fundamental Agent failed after retries: {e}")
         return "⚠️ Dữ liệu Phân tích Cơ bản tạm thời không khả dụng do lỗi API/Mạng. Master Agent hãy bỏ qua phần này."
 
-async def run_macro_agent(ticker: str, market_data: str) -> str:
-    """Agent Phân tích Vĩ mô & Dòng tiền"""
+async def run_macro_agent(ticker: str, market_data: str, news_data: str) -> str:
+    """Agent Phân tích Vĩ mô & Dòng tiền (Tích hợp News RAG)"""
     prompt = f"""
     Bạn là một Chuyên gia Chiến lược Thị trường (Macro & Flow Analyst).
-    Nhiệm vụ của bạn là đánh giá bối cảnh thị trường chung (VN-INDEX), xu hướng dòng tiền để xem môi trường hiện tại có thuận lợi cho việc đầu tư mã {ticker} hay không.
+    Nhiệm vụ của bạn là đánh giá bối cảnh thị trường chung (VN-INDEX), xu hướng dòng tiền và TÂM LÝ TIN TỨC để xem môi trường hiện tại có thuận lợi cho việc đầu tư mã {ticker} hay không.
     
     Dữ liệu thị trường chung (Real Data):
     {market_data}
     
-    Hãy đưa ra nhận định ngắn gọn (dưới 150 từ) về sức mạnh của VN-INDEX. Kết luận bằng một trạng thái: THUẬN LỢI, RỦI RO, hoặc THẬN TRỌNG.
+    Tin tức mới nhất (Real-time News):
+    {news_data}
+    
+    Hãy đưa ra nhận định ngắn gọn (dưới 150 từ) về sức mạnh của VN-INDEX và đánh giá rõ Tâm lý tin tức (Sentiment) hiện tại là Tích cực hay Tiêu cực. Kết luận bằng một trạng thái: THUẬN LỢI, RỦI RO, hoặc THẬN TRỌNG.
     """
     try:
         return await fetch_gemini_response(macro_model, prompt)
@@ -164,6 +167,9 @@ async def run_master_agent(ticker: str, current_price: float, tech_analysis: str
             print(f"Master Agent completely failed after fallback: {e2}")
             fallback = {
                 "recommendation": "LỖI HỆ THỐNG",
+                "order_action": "GIỮ",
+                "target_price": 0.0,
+                "volume_percent": 0,
                 "allocation_pct": 0,
                 "stop_loss": 0.0,
                 "take_profit": 0.0,
@@ -182,6 +188,9 @@ async def run_master_agent(ticker: str, current_price: float, tech_analysis: str
             print(f"Master Agent completely failed after fallback: {e2}")
             fallback = {
                 "recommendation": "LỖI HỆ THỐNG",
+                "order_action": "GIỮ",
+                "target_price": 0.0,
+                "volume_percent": 0,
                 "allocation_pct": 0,
                 "stop_loss": 0.0,
                 "take_profit": 0.0,
@@ -190,13 +199,13 @@ async def run_master_agent(ticker: str, current_price: float, tech_analysis: str
             }
             return json.dumps(fallback)
 
-async def analyze_stock_async(ticker: str, current_price: float, tech_data: str, fa_data: str, market_data: str, risk_profile: str = "Cân bằng") -> dict:
+async def analyze_stock_async(ticker: str, current_price: float, tech_data: str, fa_data: str, market_data: str, news_data: str, risk_profile: str = "Cân bằng") -> dict:
     """Hàm main để chạy song song 3 Agent con, sau đó gọi Master Agent"""
     
     # 1. Chạy song song 3 Agent con (Rate Limit đã được aiolimiter quản lý tự động)
     tech_task = asyncio.create_task(run_technical_agent(ticker, tech_data))
     fa_task = asyncio.create_task(run_fundamental_agent(ticker, fa_data))
-    macro_task = asyncio.create_task(run_macro_agent(ticker, market_data))
+    macro_task = asyncio.create_task(run_macro_agent(ticker, market_data, news_data))
     
     tech_result, fa_result, macro_result = await asyncio.gather(tech_task, fa_task, macro_task)
     
@@ -208,6 +217,9 @@ async def analyze_stock_async(ticker: str, current_price: float, tech_data: str,
     except json.JSONDecodeError:
         master_data = {
              "recommendation": "LỖI PARSE JSON",
+             "order_action": "GIỮ",
+             "target_price": 0.0,
+             "volume_percent": 0,
              "allocation_pct": 0,
              "stop_loss": 0.0,
              "take_profit": 0.0,

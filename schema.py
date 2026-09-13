@@ -2,6 +2,9 @@ from pydantic import BaseModel, Field
 
 class MasterAgentResponse(BaseModel):
     recommendation: str = Field(description="Khuyến nghị cuối cùng: MUA, BÁN, hoặc NẮM GIỮ (HOLD)")
+    order_action: str = Field(description="Hành động đặt lệnh (MUA/BÁN/GIỮ)")
+    target_price: float = Field(description="Giá đặt lệnh mục tiêu (VND)")
+    volume_percent: int = Field(description="Tỷ trọng vốn giải ngân (%)")
     allocation_pct: int = Field(description="Tỷ trọng giải ngân đề xuất (từ 0 đến 100)")
     stop_loss: float = Field(description="Giá cắt lỗ dự kiến (VND)")
     take_profit: float = Field(description="Giá chốt lời mục tiêu (VND)")

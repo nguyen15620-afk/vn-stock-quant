@@ -11,3 +11,5 @@ python-dotenv
 tenacity
 google-generativeai
 aiolimiter>=1.1.0
+beautifulsoup4
+lxml
