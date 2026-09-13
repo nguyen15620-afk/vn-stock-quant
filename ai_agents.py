@@ -33,10 +33,13 @@ def configure_gemini(api_key: str):
         flash_model_name = llm_manager.get_best_available_model(api_key, tier="flash")
         pro_model_name = llm_manager.get_best_available_model(api_key, tier="pro")
         
-        tech_model = genai.GenerativeModel(flash_model_name)
-        fa_model = genai.GenerativeModel(flash_model_name)
-        macro_model = genai.GenerativeModel(flash_model_name)
-        master_model = genai.GenerativeModel(pro_model_name)
+        clean_flash = flash_model_name.replace("models/", "")
+        clean_pro = pro_model_name.replace("models/", "")
+        
+        tech_model = genai.GenerativeModel(clean_flash)
+        fa_model = genai.GenerativeModel(clean_flash)
+        macro_model = genai.GenerativeModel(clean_flash)
+        master_model = genai.GenerativeModel(clean_pro)
     except Exception as e:
         print(f"Error initializing models: {e}")
 
@@ -153,7 +156,9 @@ async def run_master_agent(ticker: str, current_price: float, tech_analysis: str
         print(f"Master Agent hit Quota Limit with PRO model: {qe}")
         print("⚠️ Bắt đầu Auto-Fallback sang model Flash...")
         try:
-            fallback_model = genai.GenerativeModel(flash_model_name)
+            # Đảm bảo không bị lặp chữ models/models/
+            clean_flash = flash_model_name.replace("models/", "")
+            fallback_model = genai.GenerativeModel(clean_flash)
             return await fetch_gemini_response(fallback_model, prompt, is_pro=False, generation_config=gen_config)
         except QuotaExceededError as fallback_qe:
             # Ngay cả bản Flash cũng báo lỗi Quota (hết Token hằng ngày), chúng ta sẽ throw nó ra UI
@@ -174,7 +179,9 @@ async def run_master_agent(ticker: str, current_price: float, tech_analysis: str
         print("⚠️ Bắt đầu Auto-Fallback sang model Flash...")
         try:
             # Fallback sang Flash model (is_pro=False)
-            fallback_model = genai.GenerativeModel(flash_model_name)
+            # Đảm bảo không bị lặp chữ models/models/
+            clean_flash = flash_model_name.replace("models/", "")
+            fallback_model = genai.GenerativeModel(clean_flash)
             return await fetch_gemini_response(fallback_model, prompt, is_pro=False, generation_config=gen_config)
         except Exception as e2:
             print(f"Master Agent completely failed after fallback: {e2}")
