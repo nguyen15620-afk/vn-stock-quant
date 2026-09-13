@@ -31,19 +31,19 @@ def configure_gemini(api_key: str):
     try:
         global flash_model_name
         flash_model_name = llm_manager.get_best_available_model(api_key, tier="flash")
-        pro_model_name = llm_manager.get_best_available_model(api_key, tier="pro")
+        master_model_name = llm_manager.get_best_available_model(api_key, tier="master")
         
         tech_model = genai.GenerativeModel(flash_model_name)
         fa_model = genai.GenerativeModel(flash_model_name)
         macro_model = genai.GenerativeModel(flash_model_name)
-        master_model = genai.GenerativeModel(pro_model_name)
+        master_model = genai.GenerativeModel(master_model_name)
     except Exception as e:
         print(f"Error initializing models: {e}")
 
 # Giảm thời gian chờ retry để báo lỗi nhanh hơn nếu cấu hình sai
 @retry(wait=wait_exponential(multiplier=1, min=1, max=3), stop=stop_after_attempt(2), reraise=True)
-async def fetch_gemini_response(model, prompt, is_pro=False, generation_config=None):
-    limiter = llm_manager.get_pro_limiter() if is_pro else llm_manager.get_flash_limiter()
+async def fetch_gemini_response(model, prompt, is_master=False, generation_config=None):
+    limiter = llm_manager.get_master_limiter() if is_master else llm_manager.get_flash_limiter()
     async with limiter:
         try:
             if generation_config:
@@ -147,14 +147,14 @@ async def run_master_agent(ticker: str, current_price: float, tech_analysis: str
             response_mime_type="application/json",
             response_schema=MasterAgentResponse
         )
-        return await fetch_gemini_response(master_model, prompt, is_pro=True, generation_config=gen_config)
+        return await fetch_gemini_response(master_model, prompt, is_master=True, generation_config=gen_config)
     except QuotaExceededError as qe:
-        # Nếu Pro bị lỗi Quota thì tiến hành Fallback, không throw lỗi ra ngoài
-        print(f"Master Agent hit Quota Limit with PRO model: {qe}")
-        print("⚠️ Bắt đầu Auto-Fallback sang model Flash...")
+        # Nếu Master bị lỗi Quota thì tiến hành Fallback, không throw lỗi ra ngoài
+        print(f"Master Agent hit Quota Limit with MASTER model: {qe}")
+        print("⚠️ Bắt đầu Auto-Fallback sang model Flash Lite...")
         try:
             fallback_model = genai.GenerativeModel(flash_model_name)
-            return await fetch_gemini_response(fallback_model, prompt, is_pro=False, generation_config=gen_config)
+            return await fetch_gemini_response(fallback_model, prompt, is_master=False, generation_config=gen_config)
         except QuotaExceededError as fallback_qe:
             # Ngay cả bản Flash cũng báo lỗi Quota (hết Token hằng ngày), chúng ta sẽ throw nó ra UI
             raise fallback_qe
@@ -170,12 +170,12 @@ async def run_master_agent(ticker: str, current_price: float, tech_analysis: str
             }
             return json.dumps(fallback)
     except Exception as e:
-        print(f"Master Agent failed with PRO model: {e}")
-        print("⚠️ Bắt đầu Auto-Fallback sang model Flash...")
+        print(f"Master Agent failed with MASTER model: {e}")
+        print("⚠️ Bắt đầu Auto-Fallback sang model Flash Lite...")
         try:
-            # Fallback sang Flash model (is_pro=False)
+            # Fallback sang Flash model (is_master=False)
             fallback_model = genai.GenerativeModel(flash_model_name)
-            return await fetch_gemini_response(fallback_model, prompt, is_pro=False, generation_config=gen_config)
+            return await fetch_gemini_response(fallback_model, prompt, is_master=False, generation_config=gen_config)
         except Exception as e2:
             print(f"Master Agent completely failed after fallback: {e2}")
             fallback = {
