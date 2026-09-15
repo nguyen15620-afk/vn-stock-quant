@@ -28,18 +28,24 @@ except ImportError:
 @st.cache_data(ttl=3600)
 def load_fundamentals(symbol: str) -> dict:
     """
-    Loads fundamental data (P/E, EPS, ROE) for a given symbol using yfinance.
+    Loads fundamental data (P/E, P/B, EPS, ROE, Margins) for a given symbol using yfinance.
     """
     try:
         if not HAS_YF or symbol.upper() in ['VNINDEX', 'E1VFVN30']:
             return {}
         yf_symbol = f"{symbol.upper()}.VN"
         info = yf.Ticker(yf_symbol).info
+        if not info or not isinstance(info, dict):
+            return {}
         return {
-            "PE": info.get("trailingPE"),
+            "PE": info.get("trailingPE") or info.get("forwardPE"),
+            "PB": info.get("priceToBook"),
             "EPS": info.get("trailingEps"),
             "ROE": info.get("returnOnEquity"),
-            "RevenueGrowth": info.get("revenueGrowth")
+            "RevenueGrowth": info.get("revenueGrowth"),
+            "GrossMargins": info.get("grossMargins"),
+            "ProfitMargins": info.get("profitMargins"),
+            "MarketCap": info.get("marketCap")
         }
     except Exception:
         return {}

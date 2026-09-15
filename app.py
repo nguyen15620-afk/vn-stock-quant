@@ -60,20 +60,46 @@ async def process_entire_watchlist(tickers, risk_profile, months, enable_telegra
             
         master = ai_results.get("master_decision", {})
         rec = master.get("recommendation", "N/A").upper()
-        
         order_action = master.get("order_action", rec).upper()
-        target_price = master.get("target_price", current_price)
-        volume_percent = master.get("volume_percent", master.get("allocation_pct", 0))
         
-        tcinvest_action = f"{ticker} - {order_action} - Tỷ trọng: {volume_percent}% - Giá: {target_price}"
+        try:
+            alloc_pct = int(master.get("allocation_pct", 0))
+            if alloc_pct > 100: alloc_pct = 100
+            elif alloc_pct < 0: alloc_pct = 0
+        except Exception:
+            alloc_pct = 0
+
+        try:
+            vol_pct = int(master.get("volume_percent", alloc_pct))
+            if vol_pct > 100: vol_pct = 100
+            elif vol_pct < 0: vol_pct = 0
+        except Exception:
+            vol_pct = alloc_pct
+
+        try:
+            target_price = float(master.get("target_price", current_price))
+        except Exception:
+            target_price = current_price
+
+        try:
+            sl_price = float(master.get("stop_loss", 0))
+        except Exception:
+            sl_price = 0.0
+
+        try:
+            tp_price = float(master.get("take_profit", 0))
+        except Exception:
+            tp_price = 0.0
+        
+        tcinvest_action = f"{ticker} - {order_action} - Tỷ trọng: {vol_pct}% - Giá: {target_price:,.0f}"
         
         summary_data.append({
             "Mã CP": ticker,
             "Khuyến nghị": rec,
             "Action (TCInvest Order)": tcinvest_action,
-            "Tỷ trọng (%)": master.get("allocation_pct", 0),
-            "Cắt lỗ (SL)": master.get("stop_loss", 0),
-            "Chốt lời (TP)": master.get("take_profit", 0)
+            "Tỷ trọng (%)": alloc_pct,
+            "Cắt lỗ (SL)": f"{sl_price:,.0f}" if sl_price > 0 else "-",
+            "Chốt lời (TP)": f"{tp_price:,.0f}" if tp_price > 0 else "-"
         })
         
         detailed_results[ticker] = {
@@ -88,7 +114,7 @@ async def process_entire_watchlist(tickers, risk_profile, months, enable_telegra
             
     return summary_data, detailed_results
 
-st.title("⚡ Trợ lý AI Giao dịch Chứng khoán (Gemini Pro)")
+st.title("⚡ Trợ lý AI")
 
 api_key_input = st.text_input("🔑 Nhập Google GenAI API Key:", type="password", placeholder="Paste API Key của bạn vào đây...")
 if api_key_input:
