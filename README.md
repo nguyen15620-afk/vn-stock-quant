@@ -1,5 +1,9 @@
 # VN Stock Recommendation Tool
 
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://vn-stock-quant-2rikbyfa3zykxpqqukzwx6.streamlit.app/)
+
+> 🌐 **Live Demo Website**: [https://vn-stock-quant-2rikbyfa3zykxpqqukzwx6.streamlit.app/](https://vn-stock-quant-2rikbyfa3zykxpqqukzwx6.streamlit.app/)
+
 A Quantitative Trading Dashboard built with Python, Streamlit, and vnstock, designed specifically for the Vietnamese Stock Market (HOSE/HNX and VNINDEX).
 
 ## Features
