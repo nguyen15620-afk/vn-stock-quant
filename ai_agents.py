@@ -1,64 +1,86 @@
 import os
 import asyncio
-import google.generativeai as genai
-from dotenv import load_dotenv
 import json
-from tenacity import retry, wait_exponential, stop_after_attempt
+import logging
+import google.generativeai as genai
+from typing import Dict, Any, Tuple, Optional
+from schema import MasterAgentResponse
 import llm_manager
 
-from schema import MasterAgentResponse
+logger = logging.getLogger("ai_agents")
 
 class QuotaExceededError(Exception):
-    """Lỗi khi tài khoản đã vượt quá giới hạn truy cập (Rate Limit) hoặc không được cấp phép (Quota 0)"""
+    """Lỗi khi toàn bộ model trong cascade đều đã vượt quá giới hạn truy cập."""
     pass
 
-# Global model variables
-tech_model = None
-fa_model = None
-macro_model = None
-master_model = None
-flash_model_name = None
-
 def configure_gemini(api_key: str):
-    global tech_model, fa_model, macro_model, master_model
-    
-    if not api_key:
-        raise ValueError("Thiếu API Key! Vui lòng nhập API Key trên giao diện.")
-        
-    genai.configure(api_key=api_key)
-    
-    # Khởi tạo mô hình sau khi configure
-    try:
-        global flash_model_name
-        flash_model_name = llm_manager.get_best_available_model(api_key, tier="flash")
-        master_model_name = llm_manager.get_best_available_model(api_key, tier="master")
-        
-        tech_model = genai.GenerativeModel(flash_model_name)
-        fa_model = genai.GenerativeModel(flash_model_name)
-        macro_model = genai.GenerativeModel(flash_model_name)
-        master_model = genai.GenerativeModel(master_model_name)
-    except Exception as e:
-        print(f"Error initializing models: {e}")
+    """Cấu hình API Key toàn cục cho GenAI."""
+    llm_manager.configure_llm(api_key)
 
-# Giảm thời gian chờ retry để báo lỗi nhanh hơn nếu cấu hình sai
-@retry(wait=wait_exponential(multiplier=1, min=1, max=3), stop=stop_after_attempt(2), reraise=True)
-async def fetch_gemini_response(model, prompt, is_master=False, generation_config=None):
-    limiter = llm_manager.get_master_limiter() if is_master else llm_manager.get_flash_limiter()
-    async with limiter:
+async def execute_with_cascade(
+    tier: str, 
+    prompt: str, 
+    generation_config: Optional[Any] = None, 
+    timeout_sec: int = 25
+) -> Tuple[str, str]:
+    """
+    Thực thi prompt với cơ chế Cascade và Auto-Failover:
+    - Thử lần lượt các model theo độ ưu tiên của tier ('subagent' hoặc 'master').
+    - Áp dụng đúng Rate Limiter (15 RPM cho Lite, 5 RPM cho Flash).
+    - Tự động chuyển sang model tiếp theo nếu gặp lỗi 429 / Quota / Timeout.
+    - Trả về tuple: (kết quả text, tên model đã phục vụ thành công).
+    """
+    cascade_models = llm_manager.get_cascade_models(tier)
+    last_error = None
+
+    for model_name in cascade_models:
+        limiter = llm_manager.get_limiter_for_model(model_name)
+        
         try:
-            if generation_config:
-                response = await model.generate_content_async(prompt, generation_config=generation_config)
-            else:
-                response = await model.generate_content_async(prompt)
-            return response.text
+            async with limiter:
+                logger.info(f"[{tier.upper()}] Thử gọi model '{model_name}'...")
+                model = genai.GenerativeModel(model_name)
+                
+                if generation_config:
+                    coro = model.generate_content_async(prompt, generation_config=generation_config)
+                else:
+                    coro = model.generate_content_async(prompt)
+                    
+                response = await asyncio.wait_for(coro, timeout=timeout_sec)
+                
+                if response and response.text:
+                    logger.info(f"✅ [{tier.upper()}] Model '{model_name}' phản hồi thành công.")
+                    return response.text, model_name
+                    
+        except asyncio.TimeoutError:
+            logger.warning(f"⚠️ [{tier.upper()}] Model '{model_name}' bị Timeout ({timeout_sec}s). Đang chuyển sang model tiếp theo...")
+            llm_manager.mark_model_cooldown(model_name, duration_sec=30)
+            last_error = "Timeout"
+            continue
+            
         except Exception as e:
-            error_msg = str(e).lower()
-            if "quota exceeded" in error_msg or "limit: 0" in error_msg or "429" in error_msg:
-                raise QuotaExceededError(f"API Quota bị từ chối: {str(e)}")
-            raise e
+            error_str = str(e).lower()
+            # Bắt lỗi Quota / Rate limit 429 / Quota 0
+            if "quota exceeded" in error_str or "limit: 0" in error_str or "429" in error_str or "resourceexhausted" in error_str:
+                logger.warning(f"⚠️ [{tier.upper()}] Model '{model_name}' bị Rate Limit / Hết Quota: {e}. Tự động failover...")
+                llm_manager.mark_model_cooldown(model_name, duration_sec=60)
+                last_error = e
+                continue
+            elif "404" in error_str or "not found" in error_str:
+                logger.warning(f"⚠️ [{tier.upper()}] Model '{model_name}' không tồn tại hoặc không cấp phép: {e}. Cooldown 24h...")
+                llm_manager.mark_model_cooldown(model_name, duration_sec=86400)
+                last_error = e
+                continue
+            else:
+                logger.error(f"Lỗi khi gọi model '{model_name}': {e}")
+                last_error = e
+                continue
 
-async def run_technical_agent(ticker: str, tech_data: str) -> str:
-    """Agent Phân tích Kỹ thuật"""
+    # Nếu duyệt hết toàn bộ model trong cascade mà vẫn không thành công
+    raise QuotaExceededError(f"Tất cả các model trong nhóm {tier} ({cascade_models}) đều thất bại. Lỗi cuối cùng: {last_error}")
+
+async def run_technical_agent(ticker: str, tech_data: str) -> Tuple[str, str]:
+    """Agent Phân tích Kỹ thuật (Sử dụng Sub-Agent Cascade)"""
     prompt = f"""
     Bạn là một Chuyên gia Phân tích Kỹ thuật (Technical Analyst) xuất sắc cho thị trường chứng khoán Việt Nam.
     Nhiệm vụ của bạn là phân tích hành vi giá, khối lượng, hỗ trợ/kháng cự, và các chỉ báo động lượng (RSI, MACD) của mã cổ phiếu: {ticker}.
@@ -69,15 +91,15 @@ async def run_technical_agent(ticker: str, tech_data: str) -> str:
     Hãy đưa ra phân tích ngắn gọn, súc tích (dưới 150 từ) về xu hướng hiện tại và các tín hiệu kỹ thuật đáng chú ý. Kết luận bằng một trạng thái: TÍCH CỰC, TIÊU CỰC, hoặc TRUNG LẬP.
     """
     try:
-        return await fetch_gemini_response(tech_model, prompt)
+        return await execute_with_cascade("subagent", prompt)
     except QuotaExceededError as qe:
         raise qe
     except Exception as e:
-        print(f"Technical Agent failed after retries: {e}")
-        return "⚠️ Dữ liệu Phân tích Kỹ thuật tạm thời không khả dụng do lỗi API/Mạng. Master Agent hãy bỏ qua phần này."
+        logger.error(f"Technical Agent failed: {e}")
+        return "⚠️ Dữ liệu Phân tích Kỹ thuật tạm thời không khả dụng do lỗi API/Mạng. Master Agent hãy bỏ qua phần này.", "Fallback"
 
-async def run_fundamental_agent(ticker: str, fa_data: str) -> str:
-    """Agent Phân tích Cơ bản"""
+async def run_fundamental_agent(ticker: str, fa_data: str) -> Tuple[str, str]:
+    """Agent Phân tích Cơ bản (Sử dụng Sub-Agent Cascade)"""
     prompt = f"""
     Bạn là một Chuyên gia Phân tích Cơ bản (Fundamental Analyst) am hiểu sâu sắc về định giá doanh nghiệp tại Việt Nam.
     Nhiệm vụ của bạn là đánh giá tình hình kinh doanh, định giá (P/E, P/B, EPS, ROE) và tiềm năng của: {ticker}.
@@ -88,15 +110,15 @@ async def run_fundamental_agent(ticker: str, fa_data: str) -> str:
     Hãy đưa ra phân tích ngắn gọn (dưới 150 từ) về rủi ro, định giá hiện tại (rẻ/đắt/hợp lý). Kết luận bằng một trạng thái: TỐT, XẤU, hoặc BÌNH THƯỜNG.
     """
     try:
-        return await fetch_gemini_response(fa_model, prompt)
+        return await execute_with_cascade("subagent", prompt)
     except QuotaExceededError as qe:
         raise qe
     except Exception as e:
-        print(f"Fundamental Agent failed after retries: {e}")
-        return "⚠️ Dữ liệu Phân tích Cơ bản tạm thời không khả dụng do lỗi API/Mạng. Master Agent hãy bỏ qua phần này."
+        logger.error(f"Fundamental Agent failed: {e}")
+        return "⚠️ Dữ liệu Phân tích Cơ bản tạm thời không khả dụng do lỗi API/Mạng. Master Agent hãy bỏ qua phần này.", "Fallback"
 
-async def run_macro_agent(ticker: str, market_data: str, news_data: str) -> str:
-    """Agent Phân tích Vĩ mô & Dòng tiền (Tích hợp News RAG)"""
+async def run_macro_agent(ticker: str, market_data: str, news_data: str) -> Tuple[str, str]:
+    """Agent Phân tích Vĩ mô & Dòng tiền (Sử dụng Sub-Agent Cascade)"""
     prompt = f"""
     Bạn là một Chuyên gia Chiến lược Thị trường (Macro & Flow Analyst).
     Nhiệm vụ của bạn là đánh giá bối cảnh thị trường chung (VN-INDEX), xu hướng dòng tiền và TÂM LÝ TIN TỨC để xem môi trường hiện tại có thuận lợi cho việc đầu tư mã {ticker} hay không.
@@ -110,18 +132,25 @@ async def run_macro_agent(ticker: str, market_data: str, news_data: str) -> str:
     Hãy đưa ra nhận định ngắn gọn (dưới 150 từ) về sức mạnh của VN-INDEX và đánh giá rõ Tâm lý tin tức (Sentiment) hiện tại là Tích cực hay Tiêu cực. Kết luận bằng một trạng thái: THUẬN LỢI, RỦI RO, hoặc THẬN TRỌNG.
     """
     try:
-        return await fetch_gemini_response(macro_model, prompt)
+        return await execute_with_cascade("subagent", prompt)
     except QuotaExceededError as qe:
         raise qe
     except Exception as e:
-        print(f"Macro Agent failed after retries: {e}")
-        return "⚠️ Dữ liệu Phân tích Vĩ mô tạm thời không khả dụng do lỗi API/Mạng. Master Agent hãy bỏ qua phần này."
+        logger.error(f"Macro Agent failed: {e}")
+        return "⚠️ Dữ liệu Phân tích Vĩ mô tạm thời không khả dụng do lỗi API/Mạng. Master Agent hãy bỏ qua phần này.", "Fallback"
 
-async def run_master_agent(ticker: str, current_price: float, tech_analysis: str, fa_analysis: str, macro_analysis: str, risk_profile: str = "Cân bằng") -> str:
-    """Master Agent: Tổng hợp và ra Quyết định (Hỗ trợ Graceful Degradation)"""
+async def run_master_agent(
+    ticker: str, 
+    current_price: float, 
+    tech_analysis: str, 
+    fa_analysis: str, 
+    macro_analysis: str, 
+    risk_profile: str = "Cân bằng"
+) -> Tuple[str, str]:
+    """Master Agent: Tổng hợp và ra Quyết định (Sử dụng Master Cascade + Pydantic Schema)"""
     prompt = f"""
     Bạn là Master Agent (Giám đốc Đầu tư - CIO) của một quỹ đầu tư tại Việt Nam.
-    Bạn đang xem xét mã cổ phiếu {ticker} với mức giá hiện tại là {current_price} VND.
+    Bạn đang xem xét mã cổ phiếu {ticker} với mức giá hiện tại là {current_price:,.0f} VND.
     
     Khẩu vị rủi ro (Risk Profile) của nhà đầu tư: {risk_profile}.
     
@@ -140,96 +169,87 @@ async def run_master_agent(ticker: str, current_price: float, tech_analysis: str
     
     Nhiệm vụ:
     - Đưa ra Khuyến nghị cuối cùng (MUA, BÁN, hoặc NẮM GIỮ).
-    - HÃY TỰ ĐỘNG ĐIỀU CHỈNH Tỷ trọng giải ngân phù hợp với Khẩu vị rủi ro: {risk_profile} (Thận trọng: Tỷ trọng thấp, Mạo hiểm: Tỷ trọng cao).
-    - HÃY TỰ ĐỘNG ĐIỀU CHỈNH mức giá Cắt lỗ (Stop-loss) và Chốt lời (Take-profit) linh hoạt theo Khẩu vị rủi ro: {risk_profile}. (VD: Thận trọng -> Stop-loss ngắn 3-5%. Mạo hiểm -> Stop-loss nới lỏng 8-10% để đón sóng).
-    - Cung cấp Lý do rõ ràng.
+    - HÃY TỰ ĐỘNG ĐIỀU CHỈNH Tỷ trọng giải ngân phù hợp với Khẩu vị rủi ro: {risk_profile} (Thận trọng: Tỷ trọng thấp 10-20%, Cân bằng: 20-40%, Mạo hiểm: 40-70%).
+    - HÃY TỰ ĐỘNG ĐIỀU CHỈNH mức giá Cắt lỗ (Stop-loss) và Chốt lời (Take-profit) linh hoạt theo Khẩu vị rủi ro: {risk_profile}.
+    - Cung cấp Lý do rõ ràng, khách quan.
     
     Yêu cầu định dạng đầu ra:
-    Trả về dữ liệu dưới định dạng JSON tuân thủ strict schema của bạn. KHÔNG BAO GỒM markdown format (như ```json) trong câu trả lời, chỉ xuất JSON thuần.
+    Trả về dữ liệu dưới định dạng JSON tuân thủ strict schema.
     """
-    try:
-        gen_config = genai.types.GenerationConfig(
-            response_mime_type="application/json",
-            response_schema=MasterAgentResponse
-        )
-        return await fetch_gemini_response(master_model, prompt, is_master=True, generation_config=gen_config)
-    except QuotaExceededError as qe:
-        # Nếu Master bị lỗi Quota thì tiến hành Fallback, không throw lỗi ra ngoài
-        print(f"Master Agent hit Quota Limit with MASTER model: {qe}")
-        print("⚠️ Bắt đầu Auto-Fallback sang model Flash Lite...")
-        try:
-            fallback_model = genai.GenerativeModel(flash_model_name)
-            return await fetch_gemini_response(fallback_model, prompt, is_master=False, generation_config=gen_config)
-        except QuotaExceededError as fallback_qe:
-            # Ngay cả bản Flash cũng báo lỗi Quota (hết Token hằng ngày), chúng ta sẽ throw nó ra UI
-            raise fallback_qe
-        except Exception as e2:
-            print(f"Master Agent completely failed after fallback: {e2}")
-            fallback = {
-                "recommendation": "LỖI HỆ THỐNG",
-                "order_action": "GIỮ",
-                "target_price": 0.0,
-                "volume_percent": 0,
-                "allocation_pct": 0,
-                "stop_loss": 0.0,
-                "take_profit": 0.0,
-                "reasoning": f"Tất cả các nỗ lực kết nối Master Agent đều thất bại: {e2}",
-                "market_sentiment": "Unknown"
-            }
-            return json.dumps(fallback)
-    except Exception as e:
-        print(f"Master Agent failed with MASTER model: {e}")
-        print("⚠️ Bắt đầu Auto-Fallback sang model Flash Lite...")
-        try:
-            # Fallback sang Flash model (is_master=False)
-            fallback_model = genai.GenerativeModel(flash_model_name)
-            return await fetch_gemini_response(fallback_model, prompt, is_master=False, generation_config=gen_config)
-        except Exception as e2:
-            print(f"Master Agent completely failed after fallback: {e2}")
-            fallback = {
-                "recommendation": "LỖI HỆ THỐNG",
-                "order_action": "GIỮ",
-                "target_price": 0.0,
-                "volume_percent": 0,
-                "allocation_pct": 0,
-                "stop_loss": 0.0,
-                "take_profit": 0.0,
-                "reasoning": f"Tất cả các nỗ lực kết nối Master Agent đều thất bại: {e2}",
-                "market_sentiment": "Unknown"
-            }
-            return json.dumps(fallback)
-
-async def analyze_stock_async(ticker: str, current_price: float, tech_data: str, fa_data: str, market_data: str, news_data: str, risk_profile: str = "Cân bằng") -> dict:
-    """Hàm main để chạy song song 3 Agent con, sau đó gọi Master Agent"""
     
-    # 1. Chạy song song 3 Agent con (Rate Limit đã được aiolimiter quản lý tự động)
+    gen_config = genai.types.GenerationConfig(
+        response_mime_type="application/json",
+        response_schema=MasterAgentResponse
+    )
+    
+    try:
+        return await execute_with_cascade("master", prompt, generation_config=gen_config)
+    except QuotaExceededError as qe:
+        raise qe
+    except Exception as e:
+        logger.error(f"Master Agent failed: {e}")
+        fallback = {
+            "recommendation": "LỖI HỆ THỐNG",
+            "order_action": "GIỮ",
+            "target_price": 0.0,
+            "volume_percent": 0,
+            "allocation_pct": 0,
+            "stop_loss": 0.0,
+            "take_profit": 0.0,
+            "reasoning": f"Tất cả các nỗ lực kết nối Master Agent đều thất bại: {e}",
+            "market_sentiment": "Unknown"
+        }
+        return json.dumps(fallback), "Fallback"
+
+async def analyze_stock_async(
+    ticker: str, 
+    current_price: float, 
+    tech_data: str, 
+    fa_data: str, 
+    market_data: str, 
+    news_data: str, 
+    risk_profile: str = "Cân bằng"
+) -> dict:
+    """Hàm điều phối: Chạy song song 3 Agent con qua subagent cascade, sau đó gọi Master Agent."""
+    
+    # 1. Chạy song song 3 Agent con
     tech_task = asyncio.create_task(run_technical_agent(ticker, tech_data))
     fa_task = asyncio.create_task(run_fundamental_agent(ticker, fa_data))
     macro_task = asyncio.create_task(run_macro_agent(ticker, market_data, news_data))
     
-    tech_result, fa_result, macro_result = await asyncio.gather(tech_task, fa_task, macro_task)
+    (tech_result, tech_model), (fa_result, fa_model), (macro_result, macro_model) = await asyncio.gather(
+        tech_task, fa_task, macro_task
+    )
     
     # 2. Gọi Master Agent với kết quả từ các Agent con
-    master_result_json = await run_master_agent(ticker, current_price, tech_result, fa_result, macro_result, risk_profile)
+    master_result_json, master_model = await run_master_agent(
+        ticker, current_price, tech_result, fa_result, macro_result, risk_profile
+    )
     
     try:
         master_data = json.loads(master_result_json)
     except json.JSONDecodeError:
         master_data = {
-             "recommendation": "LỖI PARSE JSON",
-             "order_action": "GIỮ",
-             "target_price": 0.0,
-             "volume_percent": 0,
-             "allocation_pct": 0,
-             "stop_loss": 0.0,
-             "take_profit": 0.0,
-             "reasoning": master_result_json,
-             "market_sentiment": "Unknown"
+            "recommendation": "LỖI PARSE JSON",
+            "order_action": "GIỮ",
+            "target_price": 0.0,
+            "volume_percent": 0,
+            "allocation_pct": 0,
+            "stop_loss": 0.0,
+            "take_profit": 0.0,
+            "reasoning": master_result_json,
+            "market_sentiment": "Unknown"
         }
     
     return {
         "tech_analysis": tech_result,
         "fa_analysis": fa_result,
         "macro_analysis": macro_result,
-        "master_decision": master_data
+        "master_decision": master_data,
+        "models_used": {
+            "tech": tech_model,
+            "fa": fa_model,
+            "macro": macro_model,
+            "master": master_model
+        }
     }

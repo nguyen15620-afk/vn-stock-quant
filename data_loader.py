@@ -1,12 +1,22 @@
 import os
 import sys
+import logging
 import pandas as pd
-import streamlit as st
+import requests
 from datetime import datetime, timedelta
 
 # Ensure UTF-8 output to avoid charmap errors on Windows when vnstock prints
 if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
+
+logger = logging.getLogger(__name__)
+
+# List of VN30 components (standard current constituent list)
+VN30 = [
+    "ACB", "BCM", "BID", "BVH", "CTG", "FPT", "GAS", "GVR", "HDB", "HPG",
+    "MBB", "MSN", "MWG", "PLX", "PNJ", "POW", "SAB", "SHB", "SSB", "SSI",
+    "STB", "TCB", "TPB", "VCB", "VHM", "VIB", "VIC", "VJC", "VNM", "VPB"
+]
 
 # Import vnstock safely
 try:
@@ -25,7 +35,45 @@ try:
 except ImportError:
     HAS_YF = False
 
-@st.cache_data(ttl=3600)
+try:
+    import streamlit as st
+    HAS_STREAMLIT = True
+except ImportError:
+    HAS_STREAMLIT = False
+
+# Safe streamlit caching wrapper that doesn't break or warn in CLI scripts
+def cache_decorator(*dargs, **dkwargs):
+    def decorator(fn):
+        cached_fn = None
+        def wrapped(*args, **kwargs):
+            nonlocal cached_fn
+            try:
+                if HAS_STREAMLIT:
+                    import streamlit as st
+                    if hasattr(st, "runtime") and st.runtime.exists():
+                        if cached_fn is None:
+                            cached_fn = st.cache_data(*dargs, **dkwargs)(fn)
+                        return cached_fn(*args, **kwargs)
+            except Exception:
+                pass
+            return fn(*args, **kwargs)
+        return wrapped
+    return decorator
+
+def _safe_st_error(msg: str):
+    """Safely log error and display to Streamlit UI if running within an active Streamlit app."""
+    logger.error(msg)
+    if HAS_STREAMLIT:
+        try:
+            import streamlit as st
+            # Only call st.error if Streamlit script context is active
+            if hasattr(st, "runtime") and st.runtime.exists():
+                st.error(msg)
+        except Exception:
+            pass
+
+
+@cache_decorator(ttl=3600)
 def load_fundamentals(symbol: str) -> dict:
     """
     Loads fundamental data (P/E, P/B, EPS, ROE, Margins) for a given symbol using yfinance.
@@ -47,10 +95,11 @@ def load_fundamentals(symbol: str) -> dict:
             "ProfitMargins": info.get("profitMargins"),
             "MarketCap": info.get("marketCap")
         }
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Error loading fundamentals for {symbol}: {e}")
         return {}
 
-@st.cache_data(ttl=3600)  # Cache data for 1 hour to prevent spamming the API
+@cache_decorator(ttl=3600)  # Cache data for 1 hour to prevent spamming the API
 def load_historical_data(symbol: str, months: int = 12, use_yfinance_only: bool = False, interval: str = "1d") -> pd.DataFrame:
     """
     Loads historical OHLCV data for a given symbol.
@@ -86,7 +135,6 @@ def load_historical_data(symbol: str, months: int = 12, use_yfinance_only: bool 
                     if USE_NEW_API:
                         # New API as per vnstock 4.0 migration guide
                         q = Quote(symbol=symbol_upper, source=source)
-                        # vnstock 4.0 may not support resolution for all sources
                         temp_df = q.history(start=start_str, end=end_str, resolution=vns_resolution)
                     else:
                         # Fallback for old API
@@ -101,12 +149,10 @@ def load_historical_data(symbol: str, months: int = 12, use_yfinance_only: bool 
                         break  # Success!
                 except Exception as e:
                     last_error = str(e)
-                    continue # Try next source
+                    continue  # Try next source
                     
         # Reliable fallback for VNINDEX using VNDirect API
         if (df is None or df.empty) and symbol_upper == 'VNINDEX':
-            import requests
-            import time
             vnd_res = 'D'
             if interval == '1wk': vnd_res = 'W'
             elif interval == '1h': vnd_res = '60'
@@ -116,16 +162,18 @@ def load_historical_data(symbol: str, months: int = 12, use_yfinance_only: bool 
             try:
                 headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
                 url = f"https://dchart-api.vndirect.com.vn/dchart/history?resolution={vnd_res}&symbol=VNINDEX&from={start_ts}&to={end_ts}"
-                res = requests.get(url, headers=headers).json()
-                if res.get('s') == 'ok':
-                    df = pd.DataFrame({
-                        'time': pd.to_datetime(res['t'], unit='s'),
-                        'open': res['o'],
-                        'high': res['h'],
-                        'low': res['l'],
-                        'close': res['c'],
-                        'volume': res['v']
-                    })
+                res = requests.get(url, headers=headers, timeout=5)
+                if res.status_code == 200:
+                    res_json = res.json()
+                    if res_json.get('s') == 'ok':
+                        df = pd.DataFrame({
+                            'time': pd.to_datetime(res_json['t'], unit='s'),
+                            'open': res_json['o'],
+                            'high': res_json['h'],
+                            'low': res_json['l'],
+                            'close': res_json['c'],
+                            'volume': res_json['v']
+                        })
             except Exception as e:
                 last_error = f"{last_error} | VNDirect API error: {str(e)}"
                 
@@ -139,19 +187,16 @@ def load_historical_data(symbol: str, months: int = 12, use_yfinance_only: bool 
                     yf_symbol = "^VNINDEX" if symbol_upper == "VNINDEX" else f"{symbol_upper}.VN"
                 ticker = yf.Ticker(yf_symbol)
                 
-                # yfinance interval uses the exact same format: 1d, 1wk, 1h
+                # Fetch history with explicit interval
                 temp_df = ticker.history(start=start_str, end=end_str, interval=interval)
-                
                 if temp_df is not None and not temp_df.empty:
-                    # yfinance returns index as Date/Datetime, we need to reset it
                     temp_df = temp_df.reset_index()
-                    # Rename columns to match what vnstock provides
-                    temp_df.rename(columns={
-                        'Date': 'time', 'Datetime': 'time',
-                        'Open': 'open', 'High': 'high', 'Low': 'low', 
-                        'Close': 'close', 'Volume': 'volume'
-                    }, inplace=True)
-                    # Convert timezone aware to timezone naive for Streamlit compatibility if needed
+                    # Normalize Date column from yfinance
+                    date_col = 'Date' if 'Date' in temp_df.columns else ('Datetime' if 'Datetime' in temp_df.columns else None)
+                    if date_col:
+                        temp_df.rename(columns={date_col: 'time'}, inplace=True)
+                    # Convert to datetime and strip timezone
+                    temp_df['time'] = pd.to_datetime(temp_df['time'])
                     if temp_df['time'].dt.tz is not None:
                         temp_df['time'] = temp_df['time'].dt.tz_localize(None)
                     df = temp_df
@@ -159,10 +204,9 @@ def load_historical_data(symbol: str, months: int = 12, use_yfinance_only: bool 
                 last_error = f"{last_error} | yfinance error: {str(e)}"
                 
         if df is None or df.empty:
-            st.error(f"Không thể lấy dữ liệu cho {symbol} từ tất cả các nguồn. Lỗi cuối cùng: {last_error}")
+            _safe_st_error(f"Không thể lấy dữ liệu cho {symbol} từ tất cả các nguồn. Lỗi: {last_error}")
             return pd.DataFrame()
             
-        # Depending on the vnstock version and source, columns might vary.
         # Standardize column names to lowercase.
         df.columns = [c.lower() for c in df.columns]
         
@@ -176,7 +220,7 @@ def load_historical_data(symbol: str, months: int = 12, use_yfinance_only: bool 
         # Make sure essential columns exist
         for col in ['open', 'high', 'low', 'close', 'volume']:
             if col not in df.columns:
-                st.error(f"Missing required column '{col}' in data.")
+                _safe_st_error(f"Missing required column '{col}' in data.")
                 return pd.DataFrame()
                 
         # Ensure sorting by time ascending
@@ -188,5 +232,5 @@ def load_historical_data(symbol: str, months: int = 12, use_yfinance_only: bool 
             
         return df
     except Exception as e:
-        st.error(f"Error loading data for {symbol}: {str(e)}")
+        _safe_st_error(f"Error loading data for {symbol}: {str(e)}")
         return pd.DataFrame()

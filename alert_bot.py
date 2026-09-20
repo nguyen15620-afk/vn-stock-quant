@@ -1,41 +1,39 @@
 import os
+import sys
 import time
-import requests
 import schedule
 import pandas as pd
 from datetime import datetime
 import pytz
+import logging
+from logging.handlers import RotatingFileHandler
+from dotenv import load_dotenv
+
+# Load biến môi trường
+load_dotenv()
+
+# Thiết lập thư mục logs
+os.makedirs("logs", exist_ok=True)
+logger = logging.getLogger("AlertBot")
+logger.setLevel(logging.INFO)
+
+# Handler console
+c_handler = logging.StreamHandler(sys.stdout)
+c_handler.setFormatter(logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s'))
+logger.addHandler(c_handler)
+
+# Handler rotating file log
+f_handler = RotatingFileHandler("logs/quant_alert.log", maxBytes=2*1024*1024, backupCount=5, encoding="utf-8")
+f_handler.setFormatter(logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s'))
+logger.addHandler(f_handler)
 
 from data_loader import load_historical_data, load_fundamentals, VN30
 from strategy import compute_indicators, generate_signals
-
-# Lấy token từ biến môi trường hoặc điền trực tiếp
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_TELEGRAM_CHAT_ID")
-
-def send_telegram_message(message: str):
-    """Gửi tin nhắn qua Telegram Bot"""
-    if TELEGRAM_BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN":
-        print("Vui lòng cấu hình TELEGRAM_BOT_TOKEN trước khi sử dụng.")
-        print("Nội dung tin nhắn dự kiến gửi:\n", message)
-        return
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"
-    }
-    try:
-        response = requests.post(url, json=payload)
-        response.raise_for_status()
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Đã gửi thông báo Telegram thành công.")
-    except Exception as e:
-        print(f"Lỗi khi gửi Telegram: {e}")
+from notifier import send_telegram_message
 
 def run_quant_scan():
-    """Chạy kịch bản quét chứng khoán và gửi báo cáo"""
-    print(f"\n--- Bắt đầu quét thị trường lúc {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---")
+    """Chạy kịch bản quét chứng khoán VN30 và gửi báo cáo Telegram"""
+    logger.info(f"--- Bắt đầu quét thị trường lúc {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---")
     
     # 1. Quét VNINDEX để lấy Market Regime
     market_regime_series = None
@@ -57,7 +55,7 @@ def run_quant_scan():
     # 2. Quét VN30
     tickers_to_scan = VN30
     for i, sym in enumerate(tickers_to_scan):
-        print(f"Đang phân tích {sym} ({i+1}/{len(tickers_to_scan)})...")
+        logger.info(f"Đang phân tích {sym} ({i+1}/{len(tickers_to_scan)})...")
         
         # Lọc FA cơ bản (ROE > 10%, P/E < 25)
         fa = load_fundamentals(sym)
@@ -65,7 +63,7 @@ def run_quant_scan():
         roe = fa.get("ROE")
         
         if not (pe and roe and 0 < pe < 25 and roe > 0.1):
-            continue  # Bỏ qua nếu FA xấu
+            continue  # Bỏ qua nếu FA xấu hoặc chưa đạt chuẩn
             
         # Lấy kỹ thuật (6 tháng)
         df_scan = load_historical_data(sym, months=6) 
@@ -107,22 +105,20 @@ def run_quant_scan():
             msg += f"   • Lý do: {s['reason']}\n\n"
             
     send_telegram_message(msg)
-    print("--- Hoàn tất quét ---")
+    logger.info("--- Hoàn tất quét ---")
 
 def job():
     run_quant_scan()
 
 if __name__ == "__main__":
-    import sys
-    
     # Nếu chạy với flag --test, chạy ngay 1 lần để test
     if len(sys.argv) > 1 and sys.argv[1] == "--test":
-        print("Chạy chế độ TEST...")
+        logger.info("Chạy chế độ TEST...")
         run_quant_scan()
         sys.exit(0)
         
-    print("🤖 Bot Telegram Quant Trading đã khởi động.")
-    print("Lịch trình: Quét và gửi thông báo vào 14:30 mỗi ngày (T2-T6).")
+    logger.info("🤖 Bot Telegram Quant Trading đã khởi động.")
+    logger.info("Lịch trình: Quét và gửi thông báo vào 14:30 mỗi ngày (T2-T6).")
     
     # Đặt lịch 14:30
     schedule.every().monday.at("14:30").do(job)
