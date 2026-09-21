@@ -158,9 +158,9 @@ if enable_telegram:
     st.sidebar.info("Cấu hình TELEGRAM_BOT_TOKEN và TELEGRAM_CHAT_ID trong file .env để nhận thông báo.")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("⚡ **Kiến trúc Model (Smart Cascade)**")
-st.sidebar.caption("🤖 **3 Sub-Agents:** `3.5-flash-lite` (15 RPM, 500 RPD) ➔ `3.1-flash-lite`")
-st.sidebar.caption("🎯 **Master Agent:** `3.8-flash` (5 RPM, 20 RPD) ➔ `3.7` ➔ `3.6` ➔ `3.5` ➔ `3.0` ➔ `Lite`")
+st.sidebar.markdown("⚡ **Kiến trúc Model Gemini**")
+st.sidebar.caption("🤖 **Sub-Agents:** `gemini-2.0-flash` (15 RPM)")
+st.sidebar.caption("🎯 **Master Agent:** `gemini-2.0-flash` (5 RPM)")
 
 
 # Tabs phân chia tính năng chính
@@ -172,7 +172,14 @@ with tab_ai:
     with col_input1:
         tickers_input = st.text_input("Nhập mã cổ phiếu (cách nhau bởi dấu phẩy):", value="FPT, HPG").upper()
     with col_input2:
-        months = st.slider("Dữ liệu (tháng):", 3, 12, 6)
+        months = st.slider(
+            "Dữ liệu (tháng):", 
+            min_value=6, 
+            max_value=24, 
+            value=12, 
+            step=3,
+            help="Tối thiểu 6 tháng (khuyến nghị 12 tháng) để đảm bảo đường MA dài hạn (SMA200) và Ichimoku tính toán chuẩn xác."
+        )
     with col_input3:
         st.write("")
         st.write("")
@@ -313,11 +320,26 @@ with tab_backtest:
     st.subheader("📊 Kiểm định Lịch sử Không Lookahead Bias")
     st.caption("Khớp lệnh tại giá Open ngày T+1 sau tín hiệu ngày T | Khấu trừ thuế bán 0.1% và phí môi giới 0.3% tổng vòng")
     
-    col_bt1, col_bt2, col_bt3, col_bt4 = st.columns([1, 1, 1, 1])
+    col_bt1, col_bt2, col_bt3, col_bt4 = st.columns([1, 1.4, 1.1, 1])
     with col_bt1:
         bt_ticker = st.text_input("Mã kiểm định:", value="FPT").upper()
     with col_bt2:
-        bt_months = st.slider("Khoảng thời gian (tháng):", 6, 24, 12)
+        preset_options = {
+            "3 Năm (36T - Chu kỳ đầy đủ)": 36,
+            "1 Năm (12T - Ngắn hạn)": 12,
+            "2 Năm (24T - Trung hạn)": 24,
+            "5 Năm (60T - Lịch sử dài)": 60
+        }
+        selected_preset = st.selectbox("Preset chu kỳ nhanh:", list(preset_options.keys()), index=0)
+        chosen_default = preset_options[selected_preset]
+        bt_months = st.slider(
+            "Khoảng thời gian (tháng):", 
+            min_value=12, 
+            max_value=60, 
+            value=chosen_default, 
+            step=6,
+            help="Khuyến nghị 36-60 tháng (3-5 năm) để bao quát trọn vẹn chu kỳ thị trường (Bull/Bear/Sideway) và đảm bảo ý nghĩa thống kê."
+        )
     with col_bt3:
         bt_strategy = st.selectbox("Chiến lược Quant:", ["trend", "momentum", "mean_reversion"], format_func=lambda x: {
             "trend": "Trend Following (Xu hướng)",
@@ -339,13 +361,14 @@ with tab_backtest:
                 df_bt = generate_signals(df_bt, strategy_type=bt_strategy)
                 bt_results = run_backtest(df_bt, initial_capital=100_000_000)
                 
-                # Hiển thị metrics tổng quan
-                m1, m2, m3, m4, m5 = st.columns(5)
+                # Hiển thị metrics tổng quan (6 metrics)
+                m1, m2, m3, m4, m5, m6 = st.columns(6)
                 m1.metric("Lợi nhuận Chiến lược", f"{bt_results['total_return_pct']:+.2f}%")
                 m2.metric("Lợi nhuận Buy & Hold", f"{bt_results['benchmark_return_pct']:+.2f}%")
                 m3.metric("Tỷ lệ thắng (Win Rate)", f"{bt_results['win_rate_pct']:.1f}%")
                 m4.metric("Profit Factor", f"{bt_results['profit_factor']:.2f}")
                 m5.metric("Max Drawdown", f"{bt_results['max_drawdown_pct']:.2f}%")
+                m6.metric("Sharpe Ratio", f"{bt_results.get('sharpe_ratio', 0.0):.2f}")
                 
                 # Biểu đồ Đường cong Vốn (Equity Curve)
                 eq_df = bt_results['equity_curve']
@@ -358,6 +381,13 @@ with tab_backtest:
                     ))
                     fig_eq.update_layout(height=350, template='plotly_white', margin=dict(l=0, r=0, t=10, b=0))
                     st.plotly_chart(fig_eq, use_container_width=True)
+                
+                # Thống kê hiệu suất theo năm (Yearly Breakdown)
+                yearly_data = bt_results.get('yearly_breakdown', [])
+                if yearly_data:
+                    st.markdown("##### 📅 Hiệu Suất Theo Từng Năm (Yearly Breakdown)")
+                    yearly_df = pd.DataFrame(yearly_data)
+                    st.dataframe(yearly_df, use_container_width=True)
                     
                 # Bảng chi tiết các lệnh giao dịch
                 trades = bt_results['trades']

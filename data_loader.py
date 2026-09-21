@@ -100,9 +100,10 @@ def load_fundamentals(symbol: str) -> dict:
         return {}
 
 @cache_decorator(ttl=3600)  # Cache data for 1 hour to prevent spamming the API
-def load_historical_data(symbol: str, months: int = 12, use_yfinance_only: bool = False, interval: str = "1d") -> pd.DataFrame:
+def load_historical_data(symbol: str, months: int = 36, use_yfinance_only: bool = False, interval: str = "1d") -> pd.DataFrame:
     """
     Loads historical OHLCV data for a given symbol.
+    months: default 36 (3 years for robust market cycle analysis and backtesting)
     interval: "1d" (daily), "1wk" (weekly), "1h" (hourly)
     """
     end_date = datetime.now()
@@ -177,8 +178,12 @@ def load_historical_data(symbol: str, months: int = 12, use_yfinance_only: bool 
             except Exception as e:
                 last_error = f"{last_error} | VNDirect API error: {str(e)}"
                 
-        # If vnstock completely fails, fallback to yfinance
-        if (df is None or df.empty) and HAS_YF:
+        # Check if local data is insufficient for long periods (> 24 months) or empty
+        min_expected_bars = int(months * 14) if months > 24 else 15
+        needs_yfinance_fill = (df is None or df.empty or (months > 24 and len(df) < min_expected_bars))
+
+        # Fallback to yfinance if empty or insufficient bars for long timeframe
+        if needs_yfinance_fill and HAS_YF:
             try:
                 # E1VFVN30 ETF is our VNINDEX proxy on yfinance
                 if symbol_upper == "E1VFVN30":

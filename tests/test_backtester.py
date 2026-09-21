@@ -82,3 +82,33 @@ def test_backtest_consecutive_buy_signals():
     # Chỉ mở 1 vị thế duy nhất và đóng khi có Sell
     assert res['total_trades'] == 1
 
+def test_backtest_sharpe_and_yearly_breakdown():
+    """Kiểm tra tính toán Sharpe Ratio và Bảng thống kê theo năm"""
+    np.random.seed(42)
+    dates = pd.date_range(start='2023-01-01', periods=500, freq='B')
+    close = 100.0 * np.cumprod(1 + np.random.normal(0.0005, 0.01, size=500))
+    df = pd.DataFrame({
+        'time': dates,
+        'open': close * 0.99,
+        'high': close * 1.01,
+        'low': close * 0.98,
+        'close': close,
+        'volume': [100_000] * 500,
+        'signal': ['Hold'] * 500
+    })
+    # Tạo vài lệnh trong 2023 và 2024
+    df.loc[10, 'signal'] = 'Buy'
+    df.loc[40, 'signal'] = 'Sell'
+    df.loc[300, 'signal'] = 'Buy'
+    df.loc[350, 'signal'] = 'Sell'
+
+    res = run_backtest(df, initial_capital=100_000_000.0)
+    assert 'sharpe_ratio' in res
+    assert isinstance(res['sharpe_ratio'], float)
+    assert 'yearly_breakdown' in res
+    assert len(res['yearly_breakdown']) >= 1
+    for row in res['yearly_breakdown']:
+        assert "Năm" in row
+        assert "Số lệnh" in row
+        assert "Lợi nhuận ròng (VNĐ)" in row
+
