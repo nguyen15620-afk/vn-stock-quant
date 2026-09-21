@@ -10,44 +10,70 @@ from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger("llm_manager")
 
-# --- DANH MỤC CASCADE DỰA TRÊN QUOTA THỰC TẾ ---
-# 1. Sub-Agents: Cần tần suất cao (3 agent con * N mã).
-#    Dùng Flash-Lite có 15 RPM và 500 RPD mỗi model (tổng 1000 RPD).
+# --- DANH MỤC CASCADE DỰA TRÊN QUOTA THỰC TẾ CỦA GOOGLE AI STUDIO ---
+
+# 1. Sub-Agents (Tech, FA, Macro): Cần tần suất cao (3 agent con * N mã).
+#    Ưu tiên các bản Lite có 15 RPM và 500 RPD mỗi model (tổng >1000 RPD/ngày).
 DEFAULT_SUBAGENT_CASCADE = [
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",  # 15 RPM, 500 RPD (Model Lite thông minh & mới nhất)
+    "gemini-3.1-flash-lite",  # 15 RPM, 500 RPD (Dự phòng số 1: thêm 500 lượt/ngày)
+    "gemini-2.5-flash-lite",  # 10 RPM, 20 RPD (Dự phòng số 2)
 ]
 
-# 2. Master Agent (CIO): Cần tư duy cao nhất, xuất JSON schema.
-#    Ưu tiên flagship 3.8-flash -> 3.7 -> 3.6 -> 3.5 -> 3-flash (mỗi model 5 RPM, 20 RPD).
-#    Fallback cuối cùng: gemini-3.5-flash-lite (500 RPD) để không bao giờ bị gián đoạn.
+# 2. Master Agent (CIO): Cần tư duy logic cao nhất, xuất JSON schema nghiêm ngặt.
+#    Ưu tiên Flagship Flash từ cao xuống thấp (mỗi model 5 RPM, 20 RPD -> Tổng 120 lượt Flash/ngày).
+#    Fallback cuối cùng: gemini-3.5-flash-lite (15 RPM, 500 RPD) để hệ thống KHÔNG BAO GIỜ bị gián đoạn.
 DEFAULT_MASTER_CASCADE = [
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3-flash-preview",
-    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash",         # 5 RPM, 20 RPD (Flagship Flash đỉnh cao nhất)
+    "gemini-3.7-flash",         # 5 RPM, 20 RPD (Dự phòng 1)
+    "gemini-3.6-flash",         # 5 RPM, 20 RPD (Dự phòng 2)
+    "gemini-3.5-flash",         # 5 RPM, 20 RPD (Dự phòng 3)
+    "gemini-3-flash-preview",   # 5 RPM, 20 RPD (Dự phòng 4)
+    "gemini-2.5-flash",         # 5 RPM, 20 RPD (Dự phòng 5)
+    "gemini-3.5-flash-lite",    # 15 RPM, 500 RPD (Cứu cánh an toàn: 500 RPD bảo vệ hệ thống)
 ]
+
+# Định mức RPM thực tế cho từng model theo bảng quota Google AI Studio
+MODEL_RPM_LIMITS: Dict[str, int] = {
+    "gemini-3.5-flash-lite": 15,
+    "gemini-3.1-flash-lite": 15,
+    "gemini-2.5-flash-lite": 10,
+    "gemini-3.8-flash": 5,
+    "gemini-3.7-flash": 5,
+    "gemini-3.6-flash": 5,
+    "gemini-3.5-flash": 5,
+    "gemini-3-flash-preview": 5,
+    "gemini-2.5-flash": 5,
+}
 
 # Quản lý Circuit Breaker & Cooldown cho từng model
 _model_cooldowns: Dict[str, float] = {}
 
-# Quản lý Rate Limiters theo event loop
+# Quản lý Rate Limiters riêng biệt cho từng model theo event loop
 _limiters: Dict[asyncio.AbstractEventLoop, Dict[str, AsyncLimiter]] = {}
 
 def get_limiter_for_model(model_name: str) -> AsyncLimiter:
-    """Trả về AsyncLimiter tương ứng với quota RPM của model (15 RPM cho Lite, 5 RPM cho Flash)."""
+    """
+    Trả về AsyncLimiter riêng biệt cho từng model.
+    Vì Google tính RPM độc lập cho từng model, việc tách riêng limiter cho phép
+    hệ thống tận dụng 100% dung lượng song song của tài khoản mà không gây nghẽn chéo.
+    """
     loop = asyncio.get_running_loop()
     if loop not in _limiters:
-        _limiters[loop] = {
-            'lite': AsyncLimiter(15, 60),
-            'flash': AsyncLimiter(5, 60)
-        }
+        _limiters[loop] = {}
         
-    if "lite" in model_name:
-        return _limiters[loop]['lite']
-    return _limiters[loop]['flash']
+    if model_name not in _limiters[loop]:
+        rpm = MODEL_RPM_LIMITS.get(model_name)
+        if rpm is None:
+            if "2.5-flash-lite" in model_name:
+                rpm = 10
+            elif "lite" in model_name:
+                rpm = 15
+            else:
+                rpm = 5
+        _limiters[loop][model_name] = AsyncLimiter(rpm, 60)
+        
+    return _limiters[loop][model_name]
 
 def mark_model_cooldown(model_name: str, duration_sec: int = 60):
     """Đánh dấu model đang bị Rate Limit/Quota Exceeded, tạm dừng sử dụng trong duration_sec giây."""

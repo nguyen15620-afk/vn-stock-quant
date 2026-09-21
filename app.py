@@ -158,9 +158,9 @@ if enable_telegram:
     st.sidebar.info("Cấu hình TELEGRAM_BOT_TOKEN và TELEGRAM_CHAT_ID trong file .env để nhận thông báo.")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("⚡ **Kiến trúc Model Gemini**")
-st.sidebar.caption("🤖 **Sub-Agents:** `gemini-2.0-flash` (15 RPM)")
-st.sidebar.caption("🎯 **Master Agent:** `gemini-2.0-flash` (5 RPM)")
+st.sidebar.markdown("⚡ **Hệ Thống Cascade Đa Tầng (Tối Ưu Quota)**")
+st.sidebar.caption("🤖 **3 Sub-Agents:** `3.5-flash-lite` (15 RPM, 500 RPD) ➔ `3.1-flash-lite` (15 RPM, 500 RPD) ➔ `2.5-flash-lite` (10 RPM)")
+st.sidebar.caption("🎯 **Master CIO:** `3.8-flash` (5 RPM, 20 RPD) ➔ `3.7` ➔ `3.6` ➔ `3.5` ➔ `3.0` ➔ `2.5` ➔ `3.5-Lite` (500 RPD)")
 
 
 # Tabs phân chia tính năng chính
