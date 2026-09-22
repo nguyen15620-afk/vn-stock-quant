@@ -14,3 +14,6 @@ aiolimiter>=1.1.0
 beautifulsoup4
 lxml
 pytest
+pydantic
+pytz
+nest_asyncio

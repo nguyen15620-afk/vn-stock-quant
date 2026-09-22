@@ -137,15 +137,22 @@ def run_backtest(
     # Tính toán các chỉ số cơ bản
     total_return_pct = round(((final_equity - initial_capital) / initial_capital) * 100.0, 2)
 
-    # Benchmark: Mua và giữ từ nến đầu đến nến cuối
-    first_close = df.iloc[0]['close']
+    # Benchmark: Mua và giữ từ nến đầu đến nến cuối (khấu trừ đầy đủ phí mua & thuế phí bán)
+    first_open = df.iloc[0].get('open', df.iloc[0]['close'])
     last_close = df.iloc[-1]['close']
-    benchmark_return_pct = round(((last_close - first_close) / first_close) * 100.0, 2) if first_close > 0 else 0.0
+    bm_cost = first_open * (1.0 + buy_fee)
+    bm_net_proceeds = last_close * (1.0 - sell_fee_tax)
+    benchmark_return_pct = round(((bm_net_proceeds - bm_cost) / bm_cost) * 100.0, 2) if bm_cost > 0 else 0.0
 
     # Max Drawdown
     equity_df['peak'] = equity_df['equity'].cummax()
     equity_df['drawdown'] = (equity_df['equity'] - equity_df['peak']) / equity_df['peak']
     max_drawdown_pct = round(abs(float(equity_df['drawdown'].min())) * 100.0, 2)
+
+    # Benchmark Equity Curve (để vẽ biểu đồ đối sánh trực quan)
+    bm_shares = int((initial_capital / (first_open * (1.0 + buy_fee))) // 100) * 100 if first_open > 0 else 0
+    bm_cash_left = initial_capital - (bm_shares * first_open * (1.0 + buy_fee)) if bm_shares > 0 else initial_capital
+    equity_df['benchmark_equity'] = bm_cash_left + (bm_shares * equity_df['close'] * (1.0 - sell_fee_tax))
 
     # Thống kê giao dịch
     total_trades = len(trades)
@@ -220,6 +227,6 @@ def run_backtest(
         "losing_trades": len(losing_trades),
         "final_equity": round(final_equity, 0),
         "trades": trades,
-        "equity_curve": equity_df[['time', 'equity']],
+        "equity_curve": equity_df[['time', 'equity', 'benchmark_equity', 'drawdown', 'close']],
         "yearly_breakdown": yearly_breakdown
     }

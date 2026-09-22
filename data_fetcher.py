@@ -9,9 +9,9 @@ from data_loader import load_historical_data, load_fundamentals
 
 logger = logging.getLogger(__name__)
 
-# Cố gắng import vnstock (nếu có)
+# Cố gắng import vnstock (hỗ trợ vnstock 4.0+)
 try:
-    from vnstock import financial_ratio, stock_historical_data
+    from vnstock import Finance, Quote
     VNSTOCK_AVAILABLE = True
 except ImportError:
     try:
@@ -77,22 +77,35 @@ def get_fundamental_data(ticker: str) -> dict:
     # 2. Tầng 2: vnstock (nếu khả dụng)
     if VNSTOCK_AVAILABLE:
         try:
-            df_ratio = financial_ratio(ticker_upper, 'yearly', True)
+            df_ratio = None
+            try:
+                from vnstock import Finance
+                for src in ['VCI', 'KBS']:
+                    try:
+                        f = Finance(symbol=ticker_upper, source=src)
+                        df_ratio = f.ratio(period='year')
+                        if df_ratio is not None and not df_ratio.empty:
+                            break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
             if df_ratio is not None and not df_ratio.empty:
                 latest = df_ratio.iloc[0]
-                pe_val = latest.get('priceToEarning')
-                pb_val = latest.get('priceToBook')
-                roe_val = latest.get('roe')
-                margin_val = latest.get('grossProfitMargin')
+                col_map = {str(k).lower().replace(' ', '_'): v for k, v in latest.items()}
+                pe_val = col_map.get('pricetoearning') or col_map.get('pe')
+                pb_val = col_map.get('pricetobook') or col_map.get('pb')
+                roe_val = col_map.get('roe')
+                margin_val = col_map.get('grossprofitmargin') or col_map.get('grossmargin')
 
-                return {
-                    "Mã CP": ticker_upper,
-                    "P/E": round(float(pe_val), 2) if pe_val is not None and pd.notnull(pe_val) else "N/A",
-                    "P/B": round(float(pb_val), 2) if pb_val is not None and pd.notnull(pb_val) else "N/A",
-                    "ROE": f"{round(float(roe_val) * 100, 2)}%" if roe_val is not None and pd.notnull(roe_val) else "N/A",
-                    "Biên LN Gộp": f"{round(float(margin_val) * 100, 2)}%" if margin_val is not None and pd.notnull(margin_val) else "N/A",
-                    "Nguồn dữ liệu": "vnstock (BCTC kiểm toán gần nhất)"
-                }
+                res = {"Mã CP": ticker_upper}
+                if pe_val is not None and pd.notnull(pe_val): res["P/E"] = round(float(pe_val), 2)
+                if pb_val is not None and pd.notnull(pb_val): res["P/B"] = round(float(pb_val), 2)
+                if roe_val is not None and pd.notnull(roe_val): res["ROE"] = f"{round(float(roe_val) * 100, 2)}%"
+                if margin_val is not None and pd.notnull(margin_val): res["Biên LN Gộp"] = f"{round(float(margin_val) * 100, 2)}%"
+                res["Nguồn dữ liệu"] = "vnstock (BCTC kiểm toán gần nhất)"
+                return res
         except Exception as e:
             logger.warning(f"Lỗi lấy FA vnstock cho {ticker_upper}: {e}")
 
@@ -153,14 +166,6 @@ def get_macro_flow() -> str:
         "Môi trường vĩ mô và mặt bằng lãi suất nhìn chung duy trì ổn định, dòng tiền trên thị trường phân hóa mạnh theo từng nhóm ngành và câu chuyện riêng lẻ."
     )
 
-@cache_decorator(ttl=600)
-def get_latest_news(ticker: str) -> str:
-    """
-    Lấy tin tức thời gian thực đa nguồn:
-    1. Google News RSS Search tiếng Việt chuyên biệt theo mã cổ phiếu (CafeF, Vietstock, Baodautu, Znews...).
-    2. CafeF RSS chuyên mục Thị trường chứng khoán (fallback).
-    Sử dụng Word-Boundary Regex để lọc chính xác ticker, tránh False Positive (VND, BID, PAN...).
-    """
 def is_ticker_in_news(ticker: str, text: str) -> bool:
     """
     Kiểm tra xem mã cổ phiếu có xuất hiện trong tin tức hay không,

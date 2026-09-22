@@ -20,14 +20,14 @@ VN30 = [
 
 # Import vnstock safely
 try:
-    from vnstock.api.quote import Quote
-    USE_NEW_API = True
+    from vnstock import Quote
+    HAS_VNSTOCK = True
 except ImportError:
-    USE_NEW_API = False
     try:
-        from vnstock import Vnstock
+        from vnstock.api.quote import Quote
+        HAS_VNSTOCK = True
     except ImportError:
-        pass
+        HAS_VNSTOCK = False
 
 try:
     import yfinance as yf
@@ -130,21 +130,11 @@ def load_historical_data(symbol: str, months: int = 36, use_yfinance_only: bool 
         elif interval == '1h':
             vns_resolution = '1H'
         
-        if not use_yfinance_only:
+        if not use_yfinance_only and HAS_VNSTOCK:
             for source in sources:
                 try:
-                    if USE_NEW_API:
-                        # New API as per vnstock 4.0 migration guide
-                        q = Quote(symbol=symbol_upper, source=source)
-                        temp_df = q.history(start=start_str, end=end_str, resolution=vns_resolution)
-                    else:
-                        # Fallback for old API
-                        if symbol_upper == 'VNINDEX':
-                            stock = Vnstock().stock(symbol='VNINDEX', source=source)
-                        else:
-                            stock = Vnstock().stock(symbol=symbol_upper, source=source)
-                        temp_df = stock.quote.history(start=start_str, end=end_str)
-                    
+                    q = Quote(symbol=symbol_upper, source=source)
+                    temp_df = q.history(start=start_str, end=end_str, resolution=vns_resolution)
                     if temp_df is not None and not temp_df.empty:
                         df = temp_df
                         break  # Success!

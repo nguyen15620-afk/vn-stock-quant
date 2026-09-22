@@ -1,30 +1,60 @@
 import streamlit as st
+import nest_asyncio
+# Áp dụng nest_asyncio ngay đầu để tránh xung đột event loop trong Streamlit
+nest_asyncio.apply()
+
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import asyncio
 import json
 import os
+from datetime import datetime
 from dotenv import load_dotenv
 
-# Load .env before other imports
+# Load biến môi trường
 load_dotenv()
 
-st.set_page_config(page_title="VN Stock AI & Quant Assistant", layout="wide")
+# Cấu hình trang Streamlit
+st.set_page_config(
+    page_title="VN Stock Quant & AI",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-from data_loader import load_historical_data
+# Nạp Design System & Custom CSS chuyên nghiệp
+from styles import CUSTOM_CSS
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+# Nạp các thành phần giao diện & modules cốt lõi
+from ui_components import (
+    render_header,
+    render_watchlist_cards,
+    render_master_decision_card,
+    render_agent_reports,
+    render_advanced_chart,
+    render_kpi_dashboard,
+    render_equity_comparison_chart
+)
+from data_loader import load_historical_data, VN30
 from data_fetcher import get_fundamental_data, get_macro_flow, get_latest_news
 from strategy import compute_indicators, generate_signals
 from ai_agents import analyze_stock_async, configure_gemini, QuotaExceededError
-from notifier import send_telegram_alert
+from notifier import send_telegram_alert, send_telegram_message
 from backtester import run_backtest
+from alert_bot import run_quant_scan
+
+# ==============================================================================
+# HÀM XỬ LÝ DỮ LIỆU BATCH ĐỒNG THỜI (ASYNC CONCURRENT)
+# ==============================================================================
 
 async def process_single_ticker(ticker: str, risk_profile: str, months: int, enable_telegram: bool, sem: asyncio.Semaphore, status_container):
     async with sem:
-        status_container.write(f"▶️ Đang tải dữ liệu và phân tích {ticker}...")
+        status_container.write(f"▶️ Đang phân tích dữ liệu đa chiều cho mã **{ticker}**...")
         df = load_historical_data(ticker, months=months)
         if df.empty:
-            status_container.warning(f"Không thể tải dữ liệu cho mã {ticker}. Bỏ qua.")
+            status_container.warning(f"Không thể tải dữ liệu nến cho mã {ticker}. Bỏ qua.")
             return None, None
             
         fa_data = get_fundamental_data(ticker)
@@ -48,27 +78,25 @@ async def process_single_ticker(ticker: str, risk_profile: str, months: int, ena
                 risk_profile=risk_profile
             )
         except QuotaExceededError as qe:
-            status_container.error(f"⚠️ Hết tài nguyên (Quota Exceeded) khi phân tích {ticker}: {qe}")
+            status_container.error(f"⚠️ Hết Quota API trên toàn bộ cascade khi phân tích {ticker}: {qe}")
             raise qe
         except Exception as e:
-            status_container.error(f"Lỗi khi chạy AI cho {ticker}: {e}")
+            status_container.error(f"Lỗi khi điều phối AI cho {ticker}: {e}")
             return None, None
             
         master = ai_results.get("master_decision", {})
-        rec = master.get("recommendation", "N/A").upper()
-        order_action = master.get("order_action", rec).upper()
+        rec = str(master.get("recommendation", "GIỮ")).upper()
+        order_action = str(master.get("order_action", rec)).upper()
         
         try:
             alloc_pct = int(master.get("allocation_pct", 0))
-            if alloc_pct > 100: alloc_pct = 100
-            elif alloc_pct < 0: alloc_pct = 0
+            alloc_pct = max(0, min(100, alloc_pct))
         except Exception:
             alloc_pct = 0
 
         try:
             vol_pct = int(master.get("volume_percent", alloc_pct))
-            if vol_pct > 100: vol_pct = 100
-            elif vol_pct < 0: vol_pct = 0
+            vol_pct = max(0, min(100, vol_pct))
         except Exception:
             vol_pct = alloc_pct
 
@@ -78,12 +106,12 @@ async def process_single_ticker(ticker: str, risk_profile: str, months: int, ena
             target_price = current_price
 
         try:
-            sl_price = float(master.get("stop_loss", 0))
+            sl_price = float(master.get("stop_loss", 0.0))
         except Exception:
             sl_price = 0.0
 
         try:
-            tp_price = float(master.get("take_profit", 0))
+            tp_price = float(master.get("take_profit", 0.0))
         except Exception:
             tp_price = 0.0
         
@@ -94,14 +122,17 @@ async def process_single_ticker(ticker: str, risk_profile: str, months: int, ena
             "Khuyến nghị": rec,
             "Action (TCInvest Order)": tcinvest_action,
             "Tỷ trọng (%)": alloc_pct,
-            "Cắt lỗ (SL)": f"{sl_price:,.0f}" if sl_price > 0 else "-",
-            "Chốt lời (TP)": f"{tp_price:,.0f}" if tp_price > 0 else "-"
+            "Cắt lỗ (SL)": f"{sl_price:,.0f} ₫" if sl_price > 0 else "-",
+            "Chốt lời (TP)": f"{tp_price:,.0f} ₫" if tp_price > 0 else "-",
+            "Giá hiện tại": f"{current_price:,.0f} ₫"
         }
         
         detail_item = {
             "ai_results": ai_results,
             "df": df,
-            "master": master
+            "master": master,
+            "fa_data": fa_data,
+            "current_price": current_price
         }
         
         # Gửi thông báo Telegram nếu bật
@@ -114,7 +145,7 @@ async def process_entire_watchlist(tickers, risk_profile, months, enable_telegra
     summary_data = []
     detailed_results = {}
     
-    # Sử dụng Semaphore(3) để xử lý đồng thời tối đa 3 mã
+    # Sử dụng Semaphore(3) để tối ưu tải và tôn trọng RPM
     sem = asyncio.Semaphore(3)
     tasks = [process_single_ticker(ticker, risk_profile, months, enable_telegram, sem, status_container) for ticker in tickers]
     
@@ -131,65 +162,131 @@ async def process_entire_watchlist(tickers, risk_profile, months, enable_telegra
         
     return summary_data, detailed_results
 
-# ----------------- UI Header & Cấu hình -----------------
-st.title("⚡ VN Stock AI & Quant Assistant")
-st.caption("Hệ thống Phân tích Định lượng Quant & Trợ lý Đa tác tử AI cho Thị trường Chứng khoán Việt Nam")
 
-# Tự động đọc API Key từ file .env
-default_api_key = os.getenv("GEMINI_API_KEY", "")
-api_key_input = st.text_input(
-    "🔑 Google GenAI API Key:",
-    value=default_api_key,
-    type="password",
-    placeholder="Nhập Gemini API Key (tự động đọc từ .env nếu có)..."
+# ==============================================================================
+# SIDEBAR CONFIGURATION
+# ==============================================================================
+
+with st.sidebar:
+    st.markdown("### ⚙️ Cấu Hình Hệ Thống")
+    
+    # API Key Input
+    default_api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key_input = st.text_input(
+        "🔑 Google GenAI API Key:",
+        value=default_api_key,
+        type="password",
+        help="Lấy API Key miễn phí tại aistudio.google.com. Tự động nạp từ file .env nếu có."
+    )
+    if api_key_input:
+        api_key_input = api_key_input.strip()
+
+    st.markdown("---")
+    st.markdown("#### 🎯 Khẩu Vị Rủi Ro")
+    risk_profile = st.selectbox(
+        "Hồ sơ rủi ro danh mục:",
+        ["Thận trọng", "Cân bằng", "Mạo hiểm"],
+        index=1,
+        help="Thận trọng: Tỷ trọng 10-20%, SL chặt | Cân bằng: 20-40% | Mạo hiểm: 40-70%"
+    )
+
+    st.markdown("---")
+    st.markdown("#### 🔔 Cảnh Báo Telegram")
+    enable_telegram = st.checkbox("Bật gửi cảnh báo MUA qua Telegram", value=False)
+    if enable_telegram:
+        tg_bot_set = bool(os.getenv("TELEGRAM_BOT_TOKEN"))
+        tg_chat_set = bool(os.getenv("TELEGRAM_CHAT_ID"))
+        if not (tg_bot_set and tg_chat_set):
+            st.warning("⚠️ Chưa cấu hình TELEGRAM_BOT_TOKEN hoặc TELEGRAM_CHAT_ID trong .env!")
+        else:
+            if st.button("🧪 Gửi tin nhắn thử nghiệm", use_container_width=True):
+                ok = send_telegram_message("⚡ <b>VN Stock Quant Assistant</b>: Kết nối Telegram Bot thành công!")
+                if ok:
+                    st.success("✅ Đã gửi tin nhắn test thành công!")
+                else:
+                    st.error("❌ Gửi tin nhắn thất bại, hãy kiểm tra lại Token/Chat ID.")
+
+    st.markdown("---")
+    st.markdown("#### 🤖 Kiến Trúc Model Cascade")
+    st.caption("• **Sub-Agents (3 Agent con):**\n  `gemini-3.5-flash-lite` (15 RPM, 500 RPD) ➔ `3.1-flash-lite` ➔ `2.5-flash-lite`")
+    st.caption("• **Master CIO (Ra Quyết Định):**\n  `gemini-3.8-flash` (5 RPM, 20 RPD) ➔ `3.7` ➔ `3.6` ➔ `3.5` ➔ `3.0` ➔ `2.5` ➔ Fallback `3.5-Lite`")
+
+
+# ==============================================================================
+# TOP HEADER BAR
+# ==============================================================================
+
+render_header(
+    api_key_configured=bool(api_key_input),
+    master_model="gemini-3.8-flash",
+    sub_model="gemini-3.5-flash-lite"
 )
-if api_key_input:
-    api_key_input = api_key_input.strip()
 
-# Sidebar
-st.sidebar.header("⚙️ Cài đặt Cá nhân hóa")
-risk_profile = st.sidebar.selectbox(
-    "Khẩu vị rủi ro:",
-    ["Thận trọng", "Cân bằng", "Mạo hiểm"],
-    index=1
-)
-enable_telegram = st.sidebar.checkbox("Bật cảnh báo Telegram")
-if enable_telegram:
-    st.sidebar.info("Cấu hình TELEGRAM_BOT_TOKEN và TELEGRAM_CHAT_ID trong file .env để nhận thông báo.")
+# ==============================================================================
+# MAIN NAVIGATION TABS (3 TABS)
+# ==============================================================================
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("⚡ **Hệ Thống Cascade Đa Tầng (Tối Ưu Quota)**")
-st.sidebar.caption("🤖 **3 Sub-Agents:** `3.5-flash-lite` (15 RPM, 500 RPD) ➔ `3.1-flash-lite` (15 RPM, 500 RPD) ➔ `2.5-flash-lite` (10 RPM)")
-st.sidebar.caption("🎯 **Master CIO:** `3.8-flash` (5 RPM, 20 RPD) ➔ `3.7` ➔ `3.6` ➔ `3.5` ➔ `3.0` ➔ `2.5` ➔ `3.5-Lite` (500 RPD)")
+tab_ai, tab_backtest, tab_alert = st.tabs([
+    "🚀 Phân Tích Đa Tác Tử AI (Multi-Agent)",
+    "📈 Kiểm Định Chiến Lược Quant (Backtest)",
+    "🔔 Quản Lý & Cấu Hình Alert Bot"
+])
 
 
-# Tabs phân chia tính năng chính
-tab_ai, tab_backtest = st.tabs(["🚀 Phân tích Đa tác tử AI (Multi-Agent)", "📈 Kiểm định Chiến lược Quant (Backtest)"])
+# ==============================================================================
+# TAB 1: PHÂN TÍCH ĐA TÁC TỬ AI (MULTI-AGENT)
+# ==============================================================================
 
-# ==================== TAB 1: PHÂN TÍCH AI ====================
 with tab_ai:
-    col_input1, col_input2, col_input3 = st.columns([1.5, 1, 1.5])
+    # Vùng chọn nhanh mã cổ phiếu (Quick Pick Chips)
+    st.markdown("##### 📌 Chọn nhanh mã Bluechip hoặc nhập tùy chỉnh:")
+    
+    # Quản lý danh sách mã đã chọn trong session_state
+    if "selected_tickers_str" not in st.session_state:
+        st.session_state.selected_tickers_str = "FPT, HPG"
+        
+    quick_tickers = ["FPT", "HPG", "VHM", "SSI", "MWG", "TCB", "VCB", "VND", "MSN"]
+    chip_cols = st.columns(len(quick_tickers))
+    for i, t in enumerate(quick_tickers):
+        with chip_cols[i]:
+            if st.button(t, key=f"chip_{t}", use_container_width=True):
+                cur_list = [x.strip() for x in st.session_state.selected_tickers_str.split(",") if x.strip()]
+                if t in cur_list:
+                    cur_list.remove(t)
+                else:
+                    cur_list.append(t)
+                st.session_state.selected_tickers_str = ", ".join(cur_list)
+                st.rerun()
+
+    # Hàng điều khiển quét phân tích
+    col_input1, col_input2, col_input3 = st.columns([2.0, 1.2, 1.2])
+    
     with col_input1:
-        tickers_input = st.text_input("Nhập mã cổ phiếu (cách nhau bởi dấu phẩy):", value="FPT, HPG").upper()
+        tickers_input = st.text_input(
+            "Danh sách mã cần phân tích (ngăn cách bởi dấu phẩy):",
+            value=st.session_state.selected_tickers_str,
+            key="main_tickers_input"
+        ).upper()
+        # Đồng bộ ngược vào session_state
+        st.session_state.selected_tickers_str = tickers_input
+
     with col_input2:
-        months = st.slider(
-            "Dữ liệu (tháng):", 
-            min_value=6, 
-            max_value=24, 
-            value=12, 
-            step=3,
-            help="Tối thiểu 6 tháng (khuyến nghị 12 tháng) để đảm bảo đường MA dài hạn (SMA200) và Ichimoku tính toán chuẩn xác."
+        months_preset = st.selectbox(
+            "Chu kỳ dữ liệu:",
+            ["12 Tháng (Khuyến nghị chuẩn)", "6 Tháng (Ngắn hạn)", "24 Tháng (Dài hạn)"],
+            index=0
         )
+        months_val = 12 if "12" in months_preset else (6 if "6" in months_preset else 24)
+
     with col_input3:
         st.write("")
         st.write("")
         analyze_btn = st.button("🚀 Quét Phân Tích Đồng Thời", type="primary", use_container_width=True)
 
-    st.caption("⚡ Hệ thống tự động điều phối đồng thời (Concurrent Batch) kết hợp Rate Limiter thông minh.")
-
+    # Thực thi phân tích AI khi nhấn nút
     if analyze_btn:
         if not api_key_input:
-            st.error("⚠️ Bạn cần cung cấp API Key để chạy AI Agents!")
+            st.error("⚠️ Bạn cần cung cấp Google GenAI API Key (ở sidebar hoặc file .env) để chạy AI Agents!")
             st.stop()
             
         configure_gemini(api_key_input)
@@ -199,130 +296,113 @@ with tab_ai:
             st.error("⚠️ Vui lòng nhập ít nhất 1 mã cổ phiếu hợp lệ.")
             st.stop()
 
-        status = st.status(f"🔍 Đang phân tích Watchlist {len(tickers)} mã (tối đa 3 mã đồng thời)...", expanded=True)
+        status_box = st.status(f"🔍 Đang điều phối phân tích song song {len(tickers)} mã cổ phiếu...", expanded=True)
         summary_data, detailed_results = asyncio.run(
-            process_entire_watchlist(tickers, risk_profile, months, enable_telegram, status)
+            process_entire_watchlist(tickers, risk_profile, months_val, enable_telegram, status_box)
         )
-        status.update(label="✅ Đã hoàn tất phân tích Watchlist!", state="complete", expanded=False)
-            
+        status_box.update(label="✅ Đã hoàn tất phân tích đa tác tử cho toàn bộ Watchlist!", state="complete", expanded=False)
+        
+        # Lưu kết quả vào session_state để không bị mất khi tương tác với UI
+        st.session_state.last_summary_data = summary_data
+        st.session_state.last_detailed_results = detailed_results
+
+    # Hiển thị kết quả nếu đã có dữ liệu
+    if "last_summary_data" in st.session_state and st.session_state.last_summary_data:
+        summary_data = st.session_state.last_summary_data
+        detailed_results = st.session_state.last_detailed_results
+        
         st.markdown("---")
-        st.subheader("📋 Bảng Tổng hợp Watchlist")
-        if summary_data:
+        st.markdown("### 📋 Tổng Quan Khuyến Nghị Watchlist")
+        
+        # 1. Thẻ Card Grid
+        render_watchlist_cards(summary_data)
+        
+        # 2. Bảng tổng hợp dạng bảng dữ liệu
+        with st.expander("📊 Xem bảng dữ liệu tổng hợp chi tiết", expanded=False):
             summary_df = pd.DataFrame(summary_data)
-            def style_rec(val):
-                if val == 'MUA': return 'background-color: #d4edda; color: #155724; font-weight: bold'
-                if val == 'BÁN': return 'background-color: #f8d7da; color: #721c24; font-weight: bold'
-                return 'background-color: #e2e3e5; color: #383d41; font-weight: bold'
+            def highlight_rec(val):
+                if val == 'MUA': return 'background-color: rgba(16, 185, 129, 0.2); color: #34D399; font-weight: bold'
+                if val == 'BÁN': return 'background-color: rgba(244, 63, 94, 0.2); color: #FB7185; font-weight: bold'
+                return 'background-color: rgba(245, 158, 11, 0.2); color: #FBBF24; font-weight: bold'
                 
-            styled_df = summary_df.style.map(style_rec, subset=['Khuyến nghị'])
-            
+            styled_df = summary_df.style.map(highlight_rec, subset=['Khuyến nghị'])
             st.dataframe(
                 styled_df, 
                 use_container_width=True,
                 column_config={
                     "Action (TCInvest Order)": st.column_config.TextColumn(
                         "Action (TCInvest Order)",
-                        help="Copy & paste cú pháp này trực tiếp vào ứng dụng TCInvest (TCBS)",
+                        help="Copy & paste cú pháp này vào ứng dụng TCBS",
                         width="large"
                     )
                 }
             )
-        else:
-            st.warning("Không có dữ liệu phân tích nào thành công.")
             
         st.markdown("---")
-        st.subheader("🔍 Phân tích Chi tiết Từng mã")
+        st.markdown("### 🔍 Phân Tích Chuyên Sâu Từng Mã Cổ Phiếu")
         
         for ticker, data in detailed_results.items():
-            with st.expander(f"Phân tích {ticker} - {data['master'].get('recommendation', 'N/A').upper()}", expanded=True):
+            rec_val = data['master'].get('recommendation', 'N/A').upper()
+            with st.expander(f"📊 Báo cáo {ticker} — Khuyến nghị: {rec_val}", expanded=True):
                 ai_results = data['ai_results']
-                df = data['df']
+                df_stock = data['df']
                 master = data['master']
+                fa_dict = data.get('fa_data', {})
+                current_price = data.get('current_price', 0.0)
                 
-                col_z1, col_z2, col_z3 = st.columns([2.2, 1.3, 1.3])
+                # Layout 2 Cột Chuyên Nghiệp: Trái (Chart + FA) | Phải (Master Decision + 3 Agent Reports)
+                col_left, col_right = st.columns([1.75, 1.25])
                 
-                with col_z1:
-                    st.markdown("**📊 Biểu đồ Nến & Bollinger Bands / MA**")
-                    fig = make_subplots(
-                        rows=2, cols=1, shared_xaxes=True,
-                        vertical_spacing=0.03, row_heights=[0.7, 0.3]
+                with col_left:
+                    # Tùy chọn chỉ báo cho Subplot
+                    sub_c1, sub_c2 = st.columns([2, 1])
+                    with sub_c1:
+                        st.markdown(f"**Biểu đồ kỹ thuật {ticker}** (OHLCV, Bollinger Bands, EMA)")
+                    with sub_c2:
+                        subchart_type = st.radio(
+                            "Chỉ báo phụ:",
+                            ["MACD", "RSI"],
+                            horizontal=True,
+                            key=f"subchart_{ticker}"
+                        )
+                    
+                    render_advanced_chart(df_stock, ticker, subchart_type=subchart_type)
+                    
+                    # Thẻ thông số cơ bản (FA Ratios)
+                    if isinstance(fa_dict, dict) and any(k in fa_dict for k in ["P/E", "P/B", "ROE", "EPS", "Vốn hóa"]):
+                        st.markdown("**🏢 Chỉ số Tài chính & Định giá:**")
+                        fa_cols = st.columns(min(len(fa_dict), 4))
+                        fa_keys = [k for k in fa_dict.keys() if k not in ["Mã CP", "Nguồn dữ liệu", "Lưu ý phân tích"]][:4]
+                        for idx, k in enumerate(fa_keys):
+                            with fa_cols[idx]:
+                                st.metric(k, str(fa_dict[k]))
+                                
+                with col_right:
+                    # Quyết định Master Agent
+                    render_master_decision_card(
+                        master=master,
+                        ticker=ticker,
+                        current_price=current_price,
+                        models_used=ai_results.get("models_used", {})
                     )
-                    # Nến giá
-                    fig.add_trace(go.Candlestick(
-                        x=df['time'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], name="Price"
-                    ), row=1, col=1)
                     
-                    # Bollinger Bands
-                    if 'bb_high' in df.columns and 'bb_low' in df.columns:
-                        fig.add_trace(go.Scatter(
-                            x=df['time'], y=df['bb_high'], line=dict(color='rgba(150, 150, 150, 0.4)', width=1, dash='dash'), name="BB Upper"
-                        ), row=1, col=1)
-                        fig.add_trace(go.Scatter(
-                            x=df['time'], y=df['bb_low'], line=dict(color='rgba(150, 150, 150, 0.4)', width=1, dash='dash'),
-                            fill='tonexty', fillcolor='rgba(200, 200, 200, 0.08)', name="BB Lower"
-                        ), row=1, col=1)
-                        
-                    # EMA 20 & EMA 50
-                    if 'ema20' in df.columns:
-                        fig.add_trace(go.Scatter(
-                            x=df['time'], y=df['ema20'], line=dict(color='#2962FF', width=1.5), name="EMA 20"
-                        ), row=1, col=1)
-                    if 'ema50' in df.columns:
-                        fig.add_trace(go.Scatter(
-                            x=df['time'], y=df['ema50'], line=dict(color='#FF6D00', width=1.5), name="EMA 50"
-                        ), row=1, col=1)
-                        
-                    # Volume & Vol SMA20
-                    fig.add_trace(go.Bar(
-                        x=df['time'], y=df['volume'], marker_color='rgba(0, 150, 255, 0.5)', name="Volume"
-                    ), row=2, col=1)
-                    if 'vol_sma20' in df.columns:
-                        fig.add_trace(go.Scatter(
-                            x=df['time'], y=df['vol_sma20'], line=dict(color='orange', width=1), name="Vol SMA20"
-                        ), row=2, col=1)
-                    
-                    fig.update_layout(
-                        height=420, xaxis_rangeslider_visible=False, 
-                        margin=dict(l=0, r=0, t=10, b=0),
-                        template='plotly_white'
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                with col_z2:
-                    st.markdown("**🧠 Báo cáo Chuyên viên AI**")
-                    st.info(f"**📈 Technical Analyst:**\n\n{ai_results.get('tech_analysis', 'Lỗi')}")
-                    st.info(f"**🏢 Fundamental Analyst:**\n\n{ai_results.get('fa_analysis', 'Lỗi')}")
-                    st.info(f"**🌐 Macro & Flow Analyst:**\n\n{ai_results.get('macro_analysis', 'Lỗi')}")
-                    
-                with col_z3:
-                    st.markdown("**🎯 Quyết định Master Agent**")
-                    rec_color = "#28a745" if master.get('recommendation', 'N/A').upper() == "MUA" else "#dc3545" if master.get('recommendation', 'N/A').upper() == "BÁN" else "#6c757d"
-                    st.markdown(f"<h3 style='text-align: center; color: {rec_color}; border: 2px solid {rec_color}; padding: 8px; border-radius: 6px;'>{master.get('recommendation', 'N/A').upper()}</h3>", unsafe_allow_html=True)
-                    
-                    c1, c2 = st.columns(2)
-                    c1.metric("Tỷ trọng", f"{master.get('allocation_pct', 0)}%")
-                    c2.metric("Tâm lý TT", master.get('market_sentiment', 'N/A'))
-                    
-                    c3, c4 = st.columns(2)
-                    c3.metric("Cắt lỗ (SL)", f"{master.get('stop_loss', 0):,.0f} ₫")
-                    c4.metric("Chốt lời (TP)", f"{master.get('take_profit', 0):,.0f} ₫")
-                    
-                    st.markdown("**Lý do đầu tư:**")
-                    st.write(master.get("reasoning", ""))
-                    
-                    models_used = ai_results.get("models_used", {})
-                    if models_used:
-                        st.caption(f"⚙️ Phục vụ bởi: Master (`{models_used.get('master', 'N/A')}`) | Sub (`{models_used.get('tech', 'N/A')}`)")
+                    st.markdown("##### 🧠 Báo Cáo Chuyên Viên AI:")
+                    render_agent_reports(ai_results)
 
 
-# ==================== TAB 2: KIỂM ĐỊNH CHIẾN LƯỢC QUANT (BACKTEST) ====================
+# ==============================================================================
+# TAB 2: KIỂM ĐỊNH CHIẾN LƯỢC QUANT (BACKTEST)
+# ==============================================================================
+
 with tab_backtest:
-    st.subheader("📊 Kiểm định Lịch sử Không Lookahead Bias")
-    st.caption("Khớp lệnh tại giá Open ngày T+1 sau tín hiệu ngày T | Khấu trừ thuế bán 0.1% và phí môi giới 0.3% tổng vòng")
+    st.markdown("### 📊 Kiểm Định Chiến Lược Lịch Sử (Quantitative Backtest)")
+    st.caption("Khớp lệnh tại giá Open nến T+1 sau tín hiệu ngày T (Zero Lookahead Bias) | Khấu trừ thuế bán 0.1% và phí môi giới 0.3% trọn vòng")
     
-    col_bt1, col_bt2, col_bt3, col_bt4 = st.columns([1, 1.4, 1.1, 1])
+    col_bt1, col_bt2, col_bt3, col_bt4 = st.columns([1.2, 1.4, 1.4, 1.0])
+    
     with col_bt1:
-        bt_ticker = st.text_input("Mã kiểm định:", value="FPT").upper()
+        bt_ticker = st.text_input("Mã kiểm định:", value="FPT", key="bt_ticker_input").upper()
+        
     with col_bt2:
         preset_options = {
             "3 Năm (36T - Chu kỳ đầy đủ)": 36,
@@ -330,70 +410,161 @@ with tab_backtest:
             "2 Năm (24T - Trung hạn)": 24,
             "5 Năm (60T - Lịch sử dài)": 60
         }
-        selected_preset = st.selectbox("Preset chu kỳ nhanh:", list(preset_options.keys()), index=0)
-        chosen_default = preset_options[selected_preset]
-        bt_months = st.slider(
-            "Khoảng thời gian (tháng):", 
-            min_value=12, 
-            max_value=60, 
-            value=chosen_default, 
-            step=6,
-            help="Khuyến nghị 36-60 tháng (3-5 năm) để bao quát trọn vẹn chu kỳ thị trường (Bull/Bear/Sideway) và đảm bảo ý nghĩa thống kê."
-        )
+        selected_preset = st.selectbox("Preset chu kỳ kiểm định:", list(preset_options.keys()), index=0)
+        chosen_months = preset_options[selected_preset]
+        
     with col_bt3:
-        bt_strategy = st.selectbox("Chiến lược Quant:", ["trend", "momentum", "mean_reversion"], format_func=lambda x: {
-            "trend": "Trend Following (Xu hướng)",
-            "momentum": "Momentum Breakout (Xung lực)",
-            "mean_reversion": "Mean Reversion (Bắt đáy RSI/BB)"
-        }[x])
+        bt_strategy = st.selectbox(
+            "Chiến lược giao dịch:", 
+            ["trend", "momentum", "mean_reversion"], 
+            format_func=lambda x: {
+                "trend": "📈 Trend Following (Xu hướng EMA/MACD)",
+                "momentum": "🚀 Momentum Breakout (Bùng nổ BB/Vol)",
+                "mean_reversion": "🔄 Mean Reversion (Bắt đáy RSI/BB)"
+            }[x]
+        )
+        
     with col_bt4:
         st.write("")
         st.write("")
-        bt_btn = st.button("▶️ Chạy Backtest", type="primary", use_container_width=True)
+        bt_btn = st.button("▶️ Chạy Kiểm Định", type="primary", use_container_width=True)
 
     if bt_btn:
-        with st.spinner(f"Đang chạy kiểm định {bt_ticker} ({bt_months} tháng)..."):
-            df_bt = load_historical_data(bt_ticker, months=bt_months)
+        with st.spinner(f"Đang trích xuất dữ liệu và mô phỏng giao dịch {bt_ticker} ({chosen_months} tháng)..."):
+            df_bt = load_historical_data(bt_ticker, months=chosen_months)
             if df_bt.empty:
-                st.error(f"Không thể tải dữ liệu giá cho {bt_ticker}.")
+                st.error(f"Không thể tải dữ liệu nến lịch sử cho mã {bt_ticker}.")
             else:
                 df_bt = compute_indicators(df_bt)
                 df_bt = generate_signals(df_bt, strategy_type=bt_strategy)
                 bt_results = run_backtest(df_bt, initial_capital=100_000_000)
                 
-                # Hiển thị metrics tổng quan (6 metrics)
-                m1, m2, m3, m4, m5, m6 = st.columns(6)
-                m1.metric("Lợi nhuận Chiến lược", f"{bt_results['total_return_pct']:+.2f}%")
-                m2.metric("Lợi nhuận Buy & Hold", f"{bt_results['benchmark_return_pct']:+.2f}%")
-                m3.metric("Tỷ lệ thắng (Win Rate)", f"{bt_results['win_rate_pct']:.1f}%")
-                m4.metric("Profit Factor", f"{bt_results['profit_factor']:.2f}")
-                m5.metric("Max Drawdown", f"{bt_results['max_drawdown_pct']:.2f}%")
-                m6.metric("Sharpe Ratio", f"{bt_results.get('sharpe_ratio', 0.0):.2f}")
+                # Lưu vào session state
+                st.session_state.last_bt_results = bt_results
+                st.session_state.last_bt_df = df_bt
+                st.session_state.last_bt_ticker = bt_ticker
+
+    if "last_bt_results" in st.session_state:
+        bt_results = st.session_state.last_bt_results
+        df_bt = st.session_state.last_bt_df
+        t_name = st.session_state.last_bt_ticker
+        
+        st.markdown("---")
+        # 1. 6 KPI Cards
+        render_kpi_dashboard(bt_results)
+        
+        st.markdown("---")
+        # 2. Biểu đồ Tăng trưởng Vốn (Equity Curve)
+        eq_df = bt_results.get('equity_curve', pd.DataFrame())
+        if not eq_df.empty:
+            render_equity_comparison_chart(eq_df)
+            
+        # 3. Thống kê theo năm & Danh sách lệnh giao dịch
+        col_y, col_tr = st.columns([1.1, 1.9])
+        
+        with col_y:
+            st.markdown("##### 📅 Hiệu Suất Từng Năm (Yearly Breakdown)")
+            yearly_data = bt_results.get('yearly_breakdown', [])
+            if yearly_data:
+                yearly_df = pd.DataFrame(yearly_data)
+                st.dataframe(yearly_df, use_container_width=True)
+            else:
+                st.info("Chưa có thống kê theo năm.")
                 
-                # Biểu đồ Đường cong Vốn (Equity Curve)
-                eq_df = bt_results['equity_curve']
-                if not eq_df.empty:
-                    st.markdown("##### 📈 Đường cong Vốn (Equity Curve)")
-                    fig_eq = go.Figure()
-                    fig_eq.add_trace(go.Scatter(
-                        x=eq_df['time'], y=eq_df['equity'], mode='lines',
-                        name="Vốn Chiến Lược (VND)", line=dict(color='#00C853', width=2)
-                    ))
-                    fig_eq.update_layout(height=350, template='plotly_white', margin=dict(l=0, r=0, t=10, b=0))
-                    st.plotly_chart(fig_eq, use_container_width=True)
+        with col_tr:
+            st.markdown("##### 📑 Lịch Sử Khớp Lệnh Chi Tiết")
+            trades = bt_results.get('trades', [])
+            if trades:
+                trades_df = pd.DataFrame(trades)
+                st.dataframe(trades_df, use_container_width=True)
+            else:
+                st.info("Không phát sinh lệnh giao dịch nào trong khoảng thời gian đã chọn.")
+
+
+# ==============================================================================
+# TAB 3: QUẢN LÝ & CẤU HÌNH ALERT BOT
+# ==============================================================================
+
+with tab_alert:
+    st.markdown("### 🔔 Quản Lý & Giám Sát Quant Alert Bot")
+    st.caption("Hệ thống tự động quét bộ lọc Quant cho toàn bộ rổ VN30 trước phiên ATC lúc 14:30 hàng ngày và gửi thông báo qua Telegram.")
+    
+    col_bot1, col_bot2 = st.columns([1.5, 1.5])
+    
+    with col_bot1:
+        st.markdown("""
+        <div class="fintech-card">
+            <h4 style="margin-top:0; color:#38BDF8;">🤖 Trạng Thái Hoạt Động Của Bot</h4>
+            <div style="font-size:13px; line-height:1.7; color:#CBD5E1;">
+                <div>• <strong>Lịch trình:</strong> Tự động quét lúc <strong>14:30</strong> các ngày Thứ 2 đến Thứ 6</div>
+                <div>• <strong>Mục tiêu quét:</strong> Rổ 30 cổ phiếu đầu ngành <strong>VN30</strong></div>
+                <div>• <strong>Bộ lọc Cơ bản:</strong> P/E &lt; 25 và ROE &gt; 10%</div>
+                <div>• <strong>Bộ lọc Kỹ thuật:</strong> Trend Following + Khung Tuần MTF</div>
+                <div>• <strong>Bộ lọc Vĩ mô:</strong> Market Regime (VN-INDEX &gt; SMA50)</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with col_bot2:
+        st.markdown("""
+        <div class="fintech-card">
+            <h4 style="margin-top:0; color:#10B981;">🚀 Kích Hoạt Quét Thủ Công Ngay</h4>
+            <p style="font-size:13px; color:#94A3B8;">Chạy quét toàn bộ 30 mã VN30 ngay lập tức và gửi thông báo qua kênh Telegram đã cấu hình.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        run_scan_btn = st.button("▶️ Chạy Quét VN30 & Gửi Cảnh Báo Ngay", type="primary", use_container_width=True)
+
+    # Khi người dùng nhấn nút quét thủ công
+    if run_scan_btn:
+        with st.spinner("Đang quét toàn bộ rổ VN30 và tính toán tín hiệu Quant..."):
+            try:
+                market_status, buy_signals, telegram_msg = run_quant_scan()
                 
-                # Thống kê hiệu suất theo năm (Yearly Breakdown)
-                yearly_data = bt_results.get('yearly_breakdown', [])
-                if yearly_data:
-                    st.markdown("##### 📅 Hiệu Suất Theo Từng Năm (Yearly Breakdown)")
-                    yearly_df = pd.DataFrame(yearly_data)
-                    st.dataframe(yearly_df, use_container_width=True)
-                    
-                # Bảng chi tiết các lệnh giao dịch
-                trades = bt_results['trades']
-                if trades:
-                    st.markdown("##### 📑 Lịch sử Lệnh Khớp Thực Tế")
-                    trades_df = pd.DataFrame(trades)
-                    st.dataframe(trades_df, use_container_width=True)
+                st.markdown("---")
+                st.markdown("#### 📊 Kết Quả Quét Trực Tiếp:")
+                st.info(f"**Trạng thái VN-INDEX:** {market_status}")
+                
+                if buy_signals:
+                    st.success(f"🎉 Phát hiện **{len(buy_signals)}** mã đạt tiêu chuẩn MUA:")
+                    b_cols = st.columns(min(len(buy_signals), 3))
+                    for b_idx, s in enumerate(buy_signals):
+                        with b_cols[b_idx % min(len(buy_signals), 3)]:
+                            st.markdown(f"""
+                            <div class="watchlist-card" style="border-color:#10B981;">
+                                <div style="font-size:18px; font-weight:800; color:#34D399;">🚀 {s['ticker']}</div>
+                                <div style="font-size:14px; margin-top:4px;">Giá: <strong>{s['price']:,.0f} ₫</strong></div>
+                                <div style="font-size:12px; color:#94A3B8; margin-top:4px;">
+                                    Điểm: <strong>{s['score']}/100</strong> | P/E: {s['pe']:.1f} | ROE: {s['roe']*100:.1f}%
+                                </div>
+                                <div style="font-size:12px; color:#E2E8F0; margin-top:6px; background:#0F141C; padding:6px; border-radius:4px;">
+                                    {s['reason']}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
                 else:
-                    st.info("Không phát sinh lệnh giao dịch nào trong khoảng thời gian đã chọn.")
+                    st.warning("Không có mã VN30 nào đạt tiêu chuẩn MUA trong phiên hôm nay.")
+            except Exception as e:
+                st.error(f"Lỗi khi thực thi quét: {e}")
+
+    # Xem danh sách mã VN30 được theo dõi
+    with st.expander("📋 Danh mục 30 mã cổ phiếu trong rổ VN30 đang được giám sát", expanded=False):
+        vn30_cols = st.columns(6)
+        for idx, sym in enumerate(VN30):
+            vn30_cols[idx % 6].markdown(f"`{sym}`")
+
+    # Xem nhật ký hoạt động gần nhất (Log Viewer)
+    st.markdown("---")
+    st.markdown("#### 📜 Nhật Ký Hoạt Động (Logs Viewer)")
+    
+    log_file_path = "logs/quant_alert.log"
+    if os.path.exists(log_file_path):
+        try:
+            with open(log_file_path, "r", encoding="utf-8") as f:
+                log_lines = f.readlines()
+                last_logs = "".join(log_lines[-30:]) if log_lines else "Nhật ký hiện đang rỗng."
+            st.code(last_logs, language="log")
+        except Exception as e:
+            st.warning(f"Không thể đọc file log: {e}")
+    else:
+        st.info("Chưa có file nhật ký `logs/quant_alert.log`. Nhật ký sẽ xuất hiện sau lần quét đầu tiên.")

@@ -161,11 +161,12 @@ def generate_signals(
             # Trend Following: Giá > EMA20 > EMA50, MACD > Signal, RSI 50-70, ADX > 20
             bullish_count = 0
             
-            if close_price > ema20 > ema50:
+            if close_price > ema20 and ema20 >= ema50:
                 bullish_count += 2
                 reason_list.append("Giá trên EMA20 và EMA50")
             elif close_price > ema20:
                 bullish_count += 1
+                reason_list.append("Giá trên EMA20")
                 
             if macd > macd_signal and macd_hist > 0:
                 bullish_count += 2

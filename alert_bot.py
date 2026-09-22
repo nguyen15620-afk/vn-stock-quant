@@ -106,6 +106,7 @@ def run_quant_scan():
             
     send_telegram_message(msg)
     logger.info("--- Hoàn tất quét ---")
+    return market_status, buy_signals, msg
 
 def job():
     run_quant_scan()
