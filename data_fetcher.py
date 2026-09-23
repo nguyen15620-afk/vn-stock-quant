@@ -2,8 +2,12 @@ import logging
 import pandas as pd
 from datetime import datetime, timedelta
 import requests
-from bs4 import BeautifulSoup
 import re
+import warnings
+import xml.etree.ElementTree as ET
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
+
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 from data_loader import load_historical_data, load_fundamentals
 
@@ -204,20 +208,29 @@ def get_latest_news(ticker: str) -> str:
         url = f"https://news.google.com/rss/search?q={ticker_upper}+c%E1%BB%95+phi%E1%BA%BFu+ch%E1%BB%A9ng+kho%C3%A1n&hl=vi&gl=VN&ceid=VN:vi"
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
-            soup = BeautifulSoup(response.content, "xml")
-            items = soup.find_all("item")
-            for item in items[:6]:
-                title = item.title.text.strip() if item.title else ""
-                pub_date = item.pubDate.text.strip() if item.pubDate else ""
-                source = item.source.text.strip() if item.source else ""
-                
-                # Rút gọn ngày (VD: 'Tue, 15 Sep 2026 07:00:00 GMT' -> '15 Sep 2026')
-                date_clean = pub_date[5:16] if len(pub_date) >= 16 else pub_date
-                
-                if title:
-                    source_str = f" ({source})" if source else ""
-                    date_str = f"[{date_clean}] " if date_clean else ""
-                    news_texts.append(f"- {date_str}{title}{source_str}")
+            try:
+                root = ET.fromstring(response.content)
+                items = root.findall(".//item")
+                for item in items[:6]:
+                    t_el = item.find("title")
+                    p_el = item.find("pubDate")
+                    s_el = item.find("source")
+                    title = t_el.text.strip() if (t_el is not None and t_el.text) else ""
+                    pub_date = p_el.text.strip() if (p_el is not None and p_el.text) else ""
+                    source = s_el.text.strip() if (s_el is not None and s_el.text) else ""
+                    
+                    date_clean = pub_date[5:16] if len(pub_date) >= 16 else pub_date
+                    if title:
+                        source_str = f" ({source})" if source else ""
+                        date_str = f"[{date_clean}] " if date_clean else ""
+                        news_texts.append(f"- {date_str}{title}{source_str}")
+            except Exception:
+                soup = BeautifulSoup(response.content, "html.parser")
+                items = soup.find_all("item")
+                for item in items[:6]:
+                    title = item.title.text.strip() if item.title else ""
+                    if title:
+                        news_texts.append(f"- {title}")
     except Exception as e:
         logger.warning(f"Lỗi cào tin tức Google News cho {ticker_upper}: {e}")
 
@@ -227,19 +240,27 @@ def get_latest_news(ticker: str) -> str:
             url_cafef = "https://cafef.vn/thi-truong-chung-khoan.rss"
             response = requests.get(url_cafef, headers=headers, timeout=5)
             if response.status_code == 200:
-                soup = BeautifulSoup(response.content, "xml")
-                items = soup.find_all("item")
-                
-                # Ưu tiên tin có nhắc đến ticker chính xác (tránh nhầm "tỷ VND")
                 matched_items = []
                 general_items = []
-                for item in items:
-                    t = item.title.text.strip() if item.title else ""
-                    if is_ticker_in_news(ticker_upper, t):
-                        matched_items.append(t)
-                    else:
-                        general_items.append(t)
-                        
+                try:
+                    root = ET.fromstring(response.content)
+                    items = root.findall(".//item")
+                    for item in items:
+                        t_el = item.find("title")
+                        t = t_el.text.strip() if (t_el is not None and t_el.text) else ""
+                        if is_ticker_in_news(ticker_upper, t):
+                            matched_items.append(t)
+                        else:
+                            general_items.append(t)
+                except Exception:
+                    soup = BeautifulSoup(response.content, "html.parser")
+                    for item in soup.find_all("item"):
+                        t = item.title.text.strip() if item.title else ""
+                        if is_ticker_in_news(ticker_upper, t):
+                            matched_items.append(t)
+                        else:
+                            general_items.append(t)
+                            
                 selected = matched_items[:5] if matched_items else general_items[:4]
                 for t in selected:
                     news_texts.append(f"- [CafeF] {t}")
