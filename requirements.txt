@@ -3,7 +3,8 @@ plotly
 pandas
 numpy
 ta
-vnstock
+vnstock>=4.0.6
+vnai>=2.5.7
 requests
 yfinance
 schedule
@@ -13,7 +14,6 @@ google-generativeai
 aiolimiter>=1.1.0
 beautifulsoup4
 lxml
-pytest
 pydantic
 pytz
 nest_asyncio

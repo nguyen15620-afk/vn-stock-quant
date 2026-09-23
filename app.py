@@ -1,6 +1,15 @@
 import streamlit as st
+
+# Cấu hình trang Streamlit (Bắt buộc là lệnh Streamlit đầu tiên)
+st.set_page_config(
+    page_title="VN Stock Quant & AI",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 import nest_asyncio
-# Áp dụng nest_asyncio ngay đầu để tránh xung đột event loop trong Streamlit
+# Áp dụng nest_asyncio để xử lý event loop an toàn trong Streamlit
 nest_asyncio.apply()
 
 import pandas as pd
@@ -15,13 +24,6 @@ from dotenv import load_dotenv
 # Load biến môi trường
 load_dotenv()
 
-# Cấu hình trang Streamlit
-st.set_page_config(
-    page_title="VN Stock Quant & AI",
-    page_icon="⚡",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 
 # Nạp Design System & Custom CSS chuyên nghiệp
 from styles import CUSTOM_CSS
