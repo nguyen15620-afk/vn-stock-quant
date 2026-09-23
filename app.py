@@ -44,7 +44,7 @@ from ui_components import (
 from data_loader import load_historical_data, VN30
 from data_fetcher import get_fundamental_data, get_macro_flow, get_latest_news
 from strategy import compute_indicators, generate_signals
-from ai_agents import analyze_stock_async, configure_gemini, QuotaExceededError
+from ai_agents import analyze_stock_async, configure_gemini, QuotaExceededError, CascadeExecutionError
 from notifier import send_telegram_alert, send_telegram_message
 from backtester import run_backtest
 from alert_bot import run_quant_scan
@@ -84,6 +84,9 @@ async def process_single_ticker(ticker: str, risk_profile: str, months: int, ena
         except QuotaExceededError as qe:
             status_container.error(f"⚠️ Hết Quota API trên toàn bộ cascade khi phân tích {ticker}: {qe}")
             raise qe
+        except CascadeExecutionError as ce:
+            status_container.error(f"❌ Không thể phân tích mã {ticker} do lỗi kết nối LLM: {ce}")
+            raise ce
         except Exception as e:
             status_container.error(f"Lỗi khi điều phối AI cho {ticker}: {e}")
             return None, None
@@ -163,6 +166,8 @@ async def process_entire_watchlist(tickers, risk_profile, months, enable_telegra
                 detailed_results[tickers[i]] = res[1]
     except QuotaExceededError:
         status_container.error("⚠️ Quota API đã chạm giới hạn, dừng toàn bộ tiến trình.")
+    except CascadeExecutionError:
+        status_container.error("❌ Gặp sự cố kết nối tới các model AI trên toàn bộ cascade.")
         
     return summary_data, detailed_results
 
@@ -226,8 +231,8 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("#### 🤖 Kiến Trúc Model Cascade")
-    st.caption("• **Sub-Agents (3 Agent con):**\n  `gemini-3.5-flash-lite` (15 RPM, 500 RPD) ➔ `3.1-flash-lite` ➔ `2.5-flash-lite`")
-    st.caption("• **Master CIO (Ra Quyết Định):**\n  `gemini-3.8-flash` (5 RPM, 20 RPD) ➔ `3.7` ➔ `3.6` ➔ `3.5` ➔ `3.0` ➔ `2.5` ➔ Fallback `3.5-Lite`")
+    st.caption("• **Sub-Agents (3 Agent con):**\n  `gemini-3.5-flash-lite` (15 RPM, 500 RPD) ➔ `3.1-flash-lite` ➔ `3.6-flash`")
+    st.caption("• **Master CIO (Ra Quyết Định):**\n  `gemini-3.6-flash` (5 RPM, 20 RPD) ➔ `3.5-flash` ➔ `3.8` ➔ `3.7` ➔ Fallback `3.5-Lite` (500 RPD)")
 
 
 # ==============================================================================
@@ -236,7 +241,7 @@ with st.sidebar:
 
 render_header(
     api_key_configured=bool(api_key_input),
-    master_model="gemini-3.8-flash",
+    master_model="gemini-3.6-flash",
     sub_model="gemini-3.5-flash-lite"
 )
 

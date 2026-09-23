@@ -17,19 +17,17 @@ logger = logging.getLogger("llm_manager")
 DEFAULT_SUBAGENT_CASCADE = [
     "gemini-3.5-flash-lite",  # 15 RPM, 500 RPD (Model Lite thông minh & mới nhất)
     "gemini-3.1-flash-lite",  # 15 RPM, 500 RPD (Dự phòng số 1: thêm 500 lượt/ngày)
-    "gemini-2.5-flash-lite",  # 10 RPM, 20 RPD (Dự phòng số 2)
+    "gemini-3.6-flash",       # 5 RPM, 20 RPD (Dự phòng số 2)
 ]
 
 # 2. Master Agent (CIO): Cần tư duy logic cao nhất, xuất JSON schema nghiêm ngặt.
-#    Ưu tiên Flagship Flash từ cao xuống thấp (mỗi model 5 RPM, 20 RPD -> Tổng 120 lượt Flash/ngày).
+#    Ưu tiên model ổn định và nhanh nhất: gemini-3.6-flash (Google khuyến nghị thay thế 2.5-flash)
 #    Fallback cuối cùng: gemini-3.5-flash-lite (15 RPM, 500 RPD) để hệ thống KHÔNG BAO GIỜ bị gián đoạn.
 DEFAULT_MASTER_CASCADE = [
-    "gemini-3.8-flash",         # 5 RPM, 20 RPD (Flagship Flash đỉnh cao nhất)
-    "gemini-3.7-flash",         # 5 RPM, 20 RPD (Dự phòng 1)
-    "gemini-3.6-flash",         # 5 RPM, 20 RPD (Dự phòng 2)
-    "gemini-3.5-flash",         # 5 RPM, 20 RPD (Dự phòng 3)
-    "gemini-3-flash-preview",   # 5 RPM, 20 RPD (Dự phòng 4)
-    "gemini-2.5-flash",         # 5 RPM, 20 RPD (Dự phòng 5)
+    "gemini-3.6-flash",         # 5 RPM, 20 RPD (Flagship Flash tối ưu tốc độ & chuẩn JSON)
+    "gemini-3.5-flash",         # 5 RPM, 20 RPD (Dự phòng 1: Hoạt động ổn định)
+    "gemini-3.8-flash",         # 5 RPM, 20 RPD (Dự phòng 2)
+    "gemini-3.7-flash",         # 5 RPM, 20 RPD (Dự phòng 3)
     "gemini-3.5-flash-lite",    # 15 RPM, 500 RPD (Cứu cánh an toàn: 500 RPD bảo vệ hệ thống)
 ]
 
@@ -38,10 +36,10 @@ MODEL_RPM_LIMITS: Dict[str, int] = {
     "gemini-3.5-flash-lite": 15,
     "gemini-3.1-flash-lite": 15,
     "gemini-2.5-flash-lite": 10,
-    "gemini-3.8-flash": 5,
-    "gemini-3.7-flash": 5,
     "gemini-3.6-flash": 5,
     "gemini-3.5-flash": 5,
+    "gemini-3.8-flash": 5,
+    "gemini-3.7-flash": 5,
     "gemini-3-flash-preview": 5,
     "gemini-2.5-flash": 5,
 }

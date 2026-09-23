@@ -11,7 +11,7 @@ import json
 import os
 from datetime import datetime
 
-def render_header(api_key_configured: bool = True, master_model: str = "gemini-3.8-flash", sub_model: str = "gemini-3.5-flash-lite"):
+def render_header(api_key_configured: bool = True, master_model: str = "gemini-3.6-flash", sub_model: str = "gemini-3.5-flash-lite"):
     """Hiển thị Header Bar cố định với thông tin thương hiệu và trạng thái Model Cascade."""
     status_dot = '<span class="pulse-dot"></span> ĐANG HOẠT ĐỘNG' if api_key_configured else '<span style="color:#F43F5E;">● CHƯA CÓ API KEY</span>'
     

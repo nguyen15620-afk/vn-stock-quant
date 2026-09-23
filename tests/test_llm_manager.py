@@ -17,18 +17,17 @@ def test_default_cascades_structure():
     """Kiểm tra cấu trúc cascade mặc định phân tách giữa Sub-Agents và Master Agent"""
     # Sub-agents dùng các bản Flash-Lite (500 RPD)
     assert len(DEFAULT_SUBAGENT_CASCADE) >= 2
-    for m in DEFAULT_SUBAGENT_CASCADE:
-        assert "lite" in m
+    assert "gemini-3.5-flash-lite" in DEFAULT_SUBAGENT_CASCADE
 
-    # Master Agent ưu tiên flagship 3.8-flash và có chốt chặn cuối là lite
-    assert "gemini-3.8-flash" in DEFAULT_MASTER_CASCADE
+    # Master Agent ưu tiên flagship 3.6-flash và có chốt chặn cuối là lite
+    assert DEFAULT_MASTER_CASCADE[0] == "gemini-3.6-flash"
     assert DEFAULT_MASTER_CASCADE[-1] == "gemini-3.5-flash-lite"
 
 def test_get_limiter_for_model():
     """Kiểm tra Rate Limiter: 15 RPM cho Lite models và 5 RPM cho Flash models"""
     async def _check():
         lite_limiter = get_limiter_for_model("gemini-3.5-flash-lite")
-        flash_limiter = get_limiter_for_model("gemini-3.8-flash")
+        flash_limiter = get_limiter_for_model("gemini-3.6-flash")
         
         assert lite_limiter.max_rate == 15
         assert lite_limiter.time_period == 60
@@ -59,14 +58,14 @@ def test_get_cascade_models_filtering(monkeypatch):
     monkeypatch.delenv("GEMINI_MASTER_MODELS", raising=False)
     _model_cooldowns.clear()
     
-    # Đưa model top 1 (gemini-3.8-flash) vào Cooldown
-    mark_model_cooldown("gemini-3.8-flash", duration_sec=120)
+    # Đưa model top 1 (gemini-3.6-flash) vào Cooldown
+    mark_model_cooldown("gemini-3.6-flash", duration_sec=120)
     
     available_master = get_cascade_models(tier="master")
-    # Model 3.8 không còn ở đầu danh sách
-    assert "gemini-3.8-flash" not in available_master
-    # Model 3.7 nhảy lên ưu tiên hàng đầu
-    assert available_master[0] == "gemini-3.7-flash"
+    # Model 3.6 không còn ở đầu danh sách
+    assert "gemini-3.6-flash" not in available_master
+    # Model 3.5 nhảy lên ưu tiên hàng đầu
+    assert available_master[0] == "gemini-3.5-flash"
 
 def test_get_cascade_models_all_cooldown_fallback(monkeypatch):
     """Khi tất cả model trong tier đều bị cooldown, hệ thống tự động reset về danh sách gốc để chống chết đói"""

@@ -9,8 +9,12 @@ import llm_manager
 
 logger = logging.getLogger("ai_agents")
 
-class QuotaExceededError(Exception):
-    """Lỗi khi toàn bộ model trong cascade đều đã vượt quá giới hạn truy cập."""
+class CascadeExecutionError(Exception):
+    """Lỗi khi toàn bộ model trong cascade đều thất bại."""
+    pass
+
+class QuotaExceededError(CascadeExecutionError):
+    """Lỗi khi toàn bộ model trong cascade đều đã vượt quá giới hạn truy cập (429/Quota)."""
     pass
 
 def configure_gemini(api_key: str):
@@ -71,13 +75,20 @@ async def execute_with_cascade(
                 llm_manager.mark_model_cooldown(model_name, duration_sec=86400)
                 last_error = e
                 continue
+            elif "schema" in error_str or "unknown field" in error_str:
+                logger.error(f"❌ Lỗi định dạng Schema: {e}")
+                raise ValueError(f"Lỗi định dạng Schema gọi LLM: {e}")
             else:
                 logger.error(f"Lỗi khi gọi model '{model_name}': {e}")
                 last_error = e
                 continue
 
     # Nếu duyệt hết toàn bộ model trong cascade mà vẫn không thành công
-    raise QuotaExceededError(f"Tất cả các model trong nhóm {tier} ({cascade_models}) đều thất bại. Lỗi cuối cùng: {last_error}")
+    last_err_str = str(last_error).lower()
+    if any(k in last_err_str for k in ["quota", "rate limit", "429", "resourceexhausted", "limit: 0"]):
+        raise QuotaExceededError(f"Tất cả các model trong nhóm {tier} ({cascade_models}) đều thất bại do vượt hạn ngạch Quota/Rate Limit. Lỗi: {last_error}")
+    else:
+        raise CascadeExecutionError(f"Tất cả các model trong nhóm {tier} ({cascade_models}) đều thất bại. Lỗi cuối cùng: {last_error}")
 
 async def run_technical_agent(ticker: str, tech_data: str) -> Tuple[str, str]:
     """Agent Phân tích Kỹ thuật (Sử dụng Sub-Agent Cascade)"""
@@ -92,8 +103,8 @@ async def run_technical_agent(ticker: str, tech_data: str) -> Tuple[str, str]:
     """
     try:
         return await execute_with_cascade("subagent", prompt)
-    except QuotaExceededError as qe:
-        raise qe
+    except (QuotaExceededError, CascadeExecutionError) as ce:
+        raise ce
     except Exception as e:
         logger.error(f"Technical Agent failed: {e}")
         return "⚠️ Dữ liệu Phân tích Kỹ thuật tạm thời không khả dụng do lỗi API/Mạng. Master Agent hãy bỏ qua phần này.", "Fallback"
@@ -111,8 +122,8 @@ async def run_fundamental_agent(ticker: str, fa_data: str) -> Tuple[str, str]:
     """
     try:
         return await execute_with_cascade("subagent", prompt)
-    except QuotaExceededError as qe:
-        raise qe
+    except (QuotaExceededError, CascadeExecutionError) as ce:
+        raise ce
     except Exception as e:
         logger.error(f"Fundamental Agent failed: {e}")
         return "⚠️ Dữ liệu Phân tích Cơ bản tạm thời không khả dụng do lỗi API/Mạng. Master Agent hãy bỏ qua phần này.", "Fallback"
@@ -133,8 +144,8 @@ async def run_macro_agent(ticker: str, market_data: str, news_data: str) -> Tupl
     """
     try:
         return await execute_with_cascade("subagent", prompt)
-    except QuotaExceededError as qe:
-        raise qe
+    except (QuotaExceededError, CascadeExecutionError) as ce:
+        raise ce
     except Exception as e:
         logger.error(f"Macro Agent failed: {e}")
         return "⚠️ Dữ liệu Phân tích Vĩ mô tạm thời không khả dụng do lỗi API/Mạng. Master Agent hãy bỏ qua phần này.", "Fallback"
@@ -183,9 +194,9 @@ async def run_master_agent(
     )
     
     try:
-        return await execute_with_cascade("master", prompt, generation_config=gen_config)
-    except QuotaExceededError as qe:
-        raise qe
+        return await execute_with_cascade("master", prompt, generation_config=gen_config, timeout_sec=35)
+    except (QuotaExceededError, CascadeExecutionError) as ce:
+        raise ce
     except Exception as e:
         logger.error(f"Master Agent failed: {e}")
         fallback = {
