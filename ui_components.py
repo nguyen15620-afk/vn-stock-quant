@@ -76,6 +76,8 @@ def render_watchlist_cards(summary_data: list):
             st.markdown(card_html, unsafe_allow_html=True)
 
 
+import textwrap
+
 def render_master_decision_card(master: dict, ticker: str, current_price: float, models_used: dict = None):
     """Hiển thị Card Quyết định của Master Agent (CIO) với phong cách fintech đẳng cấp."""
     rec = str(master.get("recommendation", "GIỮ")).upper()
@@ -92,7 +94,7 @@ def render_master_decision_card(master: dict, ticker: str, current_price: float,
     
     sentiment_color = "#10B981" if "bull" in sentiment.lower() or "tích cực" in sentiment.lower() else ("#F43F5E" if "bear" in sentiment.lower() or "tiêu cực" in sentiment.lower() else "#F59E0B")
     
-    st.markdown(f"""
+    card_html = textwrap.dedent(f"""
     <div class="fintech-card" style="border-top: 3px solid #38BDF8;">
         <div style="text-align: center; margin-bottom: 12px;">
             <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #94A3B8; margin-bottom: 4px;">🎯 QUYẾT ĐỊNH GIÁM ĐỐC ĐẦU TƯ (MASTER CIO)</div>
@@ -100,7 +102,6 @@ def render_master_decision_card(master: dict, ticker: str, current_price: float,
                 {rec_icon} {rec} ({order_action})
             </div>
         </div>
-        
         <div style="background: rgba(18, 23, 33, 0.7); border: 1px solid #242F42; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
             <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 13px;">
                 <span style="color: #94A3B8;">Tâm lý thị trường:</span>
@@ -114,7 +115,6 @@ def render_master_decision_card(master: dict, ticker: str, current_price: float,
                 <div class="alloc-bar-fill" style="width: {alloc_pct}%;"></div>
             </div>
         </div>
-        
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; text-align: center;">
             <div style="background: rgba(244, 63, 94, 0.1); border: 1px solid rgba(244, 63, 94, 0.3); border-radius: 6px; padding: 6px;">
                 <div style="font-size: 10px; color: #FDA4AF;">CẮT LỖ (SL)</div>
@@ -129,7 +129,6 @@ def render_master_decision_card(master: dict, ticker: str, current_price: float,
                 <div style="font-size: 13px; font-weight: 700; color: #10B981; font-family: 'JetBrains Mono', monospace;">{tp_price:,.0f} ₫</div>
             </div>
         </div>
-        
         <div style="margin-top: 10px;">
             <div style="font-size: 12px; font-weight: 700; color: #94A3B8; margin-bottom: 4px;">📝 Luận điểm & Lý do đầu tư:</div>
             <div style="font-size: 13px; line-height: 1.6; color: #E2E8F0; background: #0F141C; padding: 12px; border-radius: 6px; border: 1px solid #1E283B;">
@@ -137,10 +136,11 @@ def render_master_decision_card(master: dict, ticker: str, current_price: float,
             </div>
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """).strip()
+    st.markdown(card_html, unsafe_allow_html=True)
     
     if models_used:
-        st.caption(f"⚙️ Phục vụ bởi: Master (`{models_used.get('master', 'N/A')}`) | Sub-Agents (`{models_used.get('tech', 'N/A')}`)")
+        st.caption(f"⚙️ Phối hợp 4 AI Agents: 👑 Master CIO (`{models_used.get('master', 'N/A')}`) | 🤖 3 Chuyên viên (`{models_used.get('tech', 'N/A')}`)")
 
 
 def render_agent_reports(ai_results: dict):
@@ -149,31 +149,38 @@ def render_agent_reports(ai_results: dict):
     fa_text = ai_results.get("fa_analysis", "Chưa có dữ liệu.")
     macro_text = ai_results.get("macro_analysis", "Chưa có dữ liệu.")
     
-    st.markdown(f"""
-    <div class="agent-box agent-tech">
-        <div class="agent-header">
-            <span>📈 Chuyên viên Kỹ thuật (Technical Analyst)</span>
-            <span style="color:#38BDF8;">Hành vi giá & Động lượng</span>
-        </div>
-        <div class="agent-body">{tech_text}</div>
-    </div>
+    tab_tech, tab_fa, tab_macro = st.tabs([
+        "📈 Kỹ Thuật (Tech)", 
+        "🏢 Cơ Bản (FA)", 
+        "🌐 Vĩ Mô & Dòng Tiền (Macro)"
+    ])
     
-    <div class="agent-box agent-fa">
-        <div class="agent-header">
-            <span>🏢 Chuyên viên Cơ bản (Fundamental Analyst)</span>
-            <span style="color:#10B981;">Định giá & Tăng trưởng BCTC</span>
-        </div>
-        <div class="agent-body">{fa_text}</div>
-    </div>
-    
-    <div class="agent-box agent-macro">
-        <div class="agent-header">
-            <span>🌐 Chuyên viên Vĩ mô & Dòng tiền (Macro & Flow Analyst)</span>
-            <span style="color:#A855F7;">VN-INDEX & Tin tức</span>
-        </div>
-        <div class="agent-body">{macro_text}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    with tab_tech:
+        st.markdown(
+            '<div style="background: rgba(56, 189, 248, 0.08); border-left: 3px solid #38BDF8; padding: 8px 12px; border-radius: 4px; margin-bottom: 10px;">'
+            '<span style="font-size: 12px; text-transform: uppercase; color: #38BDF8; font-weight: 700;">📈 Chuyên viên Phân tích Kỹ thuật (Hành vi giá & Động lượng)</span>'
+            '</div>', 
+            unsafe_allow_html=True
+        )
+        st.markdown(tech_text)
+        
+    with tab_fa:
+        st.markdown(
+            '<div style="background: rgba(16, 185, 129, 0.08); border-left: 3px solid #10B981; padding: 8px 12px; border-radius: 4px; margin-bottom: 10px;">'
+            '<span style="font-size: 12px; text-transform: uppercase; color: #10B981; font-weight: 700;">🏢 Chuyên viên Phân tích Cơ bản (Định giá & Tăng trưởng BCTC)</span>'
+            '</div>', 
+            unsafe_allow_html=True
+        )
+        st.markdown(fa_text)
+        
+    with tab_macro:
+        st.markdown(
+            '<div style="background: rgba(168, 85, 247, 0.08); border-left: 3px solid #A855F7; padding: 8px 12px; border-radius: 4px; margin-bottom: 10px;">'
+            '<span style="font-size: 12px; text-transform: uppercase; color: #A855F7; font-weight: 700;">🌐 Chuyên viên Vĩ mô & Dòng tiền (VN-INDEX, Dòng tiền & Tin tức)</span>'
+            '</div>', 
+            unsafe_allow_html=True
+        )
+        st.markdown(macro_text)
 
 
 def render_advanced_chart(df: pd.DataFrame, ticker: str, subchart_type: str = "MACD"):
