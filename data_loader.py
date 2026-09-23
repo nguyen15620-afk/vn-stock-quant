@@ -5,9 +5,12 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta
 
-# Ensure UTF-8 output to avoid charmap errors on Windows when vnstock prints
-if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
+# Ensure UTF-8 output safely (avoid errors on non-Windows/Linux container streams)
+try:
+    if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+except Exception:
+    pass
 
 logger = logging.getLogger(__name__)
 
