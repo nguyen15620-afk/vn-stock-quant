@@ -16,4 +16,4 @@ beautifulsoup4
 lxml
 pydantic
 pytz
-nest_asyncio
+nest-asyncio

@@ -8,9 +8,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-import nest_asyncio
-# Áp dụng nest_asyncio để xử lý event loop an toàn trong Streamlit
-nest_asyncio.apply()
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+except Exception:
+    pass
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -164,6 +166,20 @@ async def process_entire_watchlist(tickers, risk_profile, months, enable_telegra
         
     return summary_data, detailed_results
 
+def run_async(coro):
+    """Thực thi coroutine bất đồng bộ an toàn trong mọi môi trường Streamlit/Thread."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(asyncio.run, coro).result()
+    else:
+        return asyncio.run(coro)
+
 
 # ==============================================================================
 # SIDEBAR CONFIGURATION
@@ -299,7 +315,7 @@ with tab_ai:
             st.stop()
 
         status_box = st.status(f"🔍 Đang điều phối phân tích song song {len(tickers)} mã cổ phiếu...", expanded=True)
-        summary_data, detailed_results = asyncio.run(
+        summary_data, detailed_results = run_async(
             process_entire_watchlist(tickers, risk_profile, months_val, enable_telegram, status_box)
         )
         status_box.update(label="✅ Đã hoàn tất phân tích đa tác tử cho toàn bộ Watchlist!", state="complete", expanded=False)
