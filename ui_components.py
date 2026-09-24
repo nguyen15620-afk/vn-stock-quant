@@ -552,6 +552,9 @@ def render_financial_metrics_bar(fa_dict: dict):
             val_color = "#F8FAFC"
             desc = ""
 
+        badge_html = f'<span class="fa-card-badge">{badge}</span>' if badge else ''
+        desc_html = f'<div class="fa-card-desc">{desc}</div>' if desc else ''
+
         card = (
             f'<div class="fa-card">'
             f'<div class="fa-card-header">'
