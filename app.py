@@ -231,8 +231,8 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("#### 🤖 Kiến Trúc Model Cascade")
-    st.caption("• **Sub-Agents (3 Agent con):**\n  `gemini-3.5-flash-lite` (15 RPM, 500 RPD) ➔ `3.1-flash-lite` ➔ `3.6-flash`")
-    st.caption("• **Master CIO (Ra Quyết Định):**\n  `gemini-3.6-flash` (5 RPM, 20 RPD) ➔ `3.5-flash` ➔ `3.8` ➔ `3.7` ➔ Fallback `3.5-Lite` (500 RPD)")
+    st.caption("• **Sub-Agents (3 Agent con):**\n  `gemini-3.5-flash` ➔ `3-flash-preview` ➔ `3.5-flash-lite` ➔ `3.6-flash`")
+    st.caption("• **Master CIO (Ra Quyết Định):**\n  `gemini-3.5-flash` ➔ `3.6-flash` ➔ `3-flash-preview` ➔ `3.8` ➔ Fallback `3.5-Lite`")
 
 
 # ==============================================================================
@@ -241,8 +241,8 @@ with st.sidebar:
 
 render_header(
     api_key_configured=bool(api_key_input),
-    master_model="gemini-3.6-flash",
-    sub_model="gemini-3.5-flash-lite"
+    master_model="gemini-3.5-flash",
+    sub_model="gemini-3.5-flash"
 )
 
 # ==============================================================================

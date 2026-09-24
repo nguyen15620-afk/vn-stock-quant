@@ -12,35 +12,38 @@ logger = logging.getLogger("llm_manager")
 
 # --- DANH MỤC CASCADE DỰA TRÊN QUOTA THỰC TẾ CỦA GOOGLE AI STUDIO ---
 
-# 1. Sub-Agents (Tech, FA, Macro): Cần tần suất cao (3 agent con * N mã).
-#    Ưu tiên các bản Lite có 15 RPM và 500 RPD mỗi model (tổng >1000 RPD/ngày).
+# 1. Sub-Agents (Tech, FA, Macro): Cần tốc độ cao & ổn định (3 agent con * N mã).
+#    Ưu tiên gemini-3.5-flash và gemini-3-flash-preview (hoạt động ổn định, không bị 503),
+#    kèm các bản Lite và 3.6-flash dự phòng.
 DEFAULT_SUBAGENT_CASCADE = [
-    "gemini-3.5-flash-lite",  # 15 RPM, 500 RPD (Model Lite thông minh & mới nhất)
-    "gemini-3.1-flash-lite",  # 15 RPM, 500 RPD (Dự phòng số 1: thêm 500 lượt/ngày)
-    "gemini-3.6-flash",       # 5 RPM, 20 RPD (Dự phòng số 2)
+    "gemini-3.5-flash",         # Hoạt động ổn định nhất, phản hồi nhanh dưới 3s
+    "gemini-3-flash-preview",   # Dự phòng 1: tốc độ cao, khả dụng tốt
+    "gemini-3.5-flash-lite",    # 15 RPM, 500 RPD (Dự phòng 2: tận dụng quota Lite khi máy chủ sẵn sàng)
+    "gemini-3.6-flash",         # 5 RPM, 20 RPD (Dự phòng 3)
+    "gemini-3.1-flash-lite",    # 15 RPM, 500 RPD (Dự phòng 4)
 ]
 
 # 2. Master Agent (CIO): Cần tư duy logic cao nhất, xuất JSON schema nghiêm ngặt.
-#    Ưu tiên model ổn định và nhanh nhất: gemini-3.6-flash (Google khuyến nghị thay thế 2.5-flash)
-#    Fallback cuối cùng: gemini-3.5-flash-lite (15 RPM, 500 RPD) để hệ thống KHÔNG BAO GIỜ bị gián đoạn.
+#    Ưu tiên gemini-3.5-flash và gemini-3.6-flash, fallback an toàn qua các flagship khác.
 DEFAULT_MASTER_CASCADE = [
+    "gemini-3.5-flash",         # Ổn định tuyệt đối, chuẩn JSON schema & không bị nghẽn
     "gemini-3.6-flash",         # 5 RPM, 20 RPD (Flagship Flash tối ưu tốc độ & chuẩn JSON)
-    "gemini-3.5-flash",         # 5 RPM, 20 RPD (Dự phòng 1: Hoạt động ổn định)
-    "gemini-3.8-flash",         # 5 RPM, 20 RPD (Dự phòng 2)
-    "gemini-3.7-flash",         # 5 RPM, 20 RPD (Dự phòng 3)
+    "gemini-3-flash-preview",   # Dự phòng 2
+    "gemini-3.8-flash",         # 5 RPM, 20 RPD (Dự phòng 3)
+    "gemini-3.7-flash",         # 5 RPM, 20 RPD (Dự phòng 4)
     "gemini-3.5-flash-lite",    # 15 RPM, 500 RPD (Cứu cánh an toàn: 500 RPD bảo vệ hệ thống)
 ]
 
 # Định mức RPM thực tế cho từng model theo bảng quota Google AI Studio
 MODEL_RPM_LIMITS: Dict[str, int] = {
+    "gemini-3.5-flash": 10,
+    "gemini-3-flash-preview": 10,
     "gemini-3.5-flash-lite": 15,
     "gemini-3.1-flash-lite": 15,
     "gemini-2.5-flash-lite": 10,
     "gemini-3.6-flash": 5,
-    "gemini-3.5-flash": 5,
     "gemini-3.8-flash": 5,
     "gemini-3.7-flash": 5,
-    "gemini-3-flash-preview": 5,
     "gemini-2.5-flash": 5,
 }
 

@@ -30,8 +30,8 @@ async def execute_with_cascade(
     """
     Thực thi prompt với cơ chế Cascade và Auto-Failover:
     - Thử lần lượt các model theo độ ưu tiên của tier ('subagent' hoặc 'master').
-    - Áp dụng đúng Rate Limiter (15 RPM cho Lite, 5 RPM cho Flash).
-    - Tự động chuyển sang model tiếp theo nếu gặp lỗi 429 / Quota / Timeout.
+    - Áp dụng đúng Rate Limiter cho từng model.
+    - Tự động chuyển sang model tiếp theo nếu gặp lỗi 429 / 503 / Quota / Timeout.
     - Trả về tuple: (kết quả text, tên model đã phục vụ thành công).
     """
     cascade_models = llm_manager.get_cascade_models(tier)
@@ -58,16 +58,16 @@ async def execute_with_cascade(
                     
         except asyncio.TimeoutError:
             logger.warning(f"⚠️ [{tier.upper()}] Model '{model_name}' bị Timeout ({timeout_sec}s). Đang chuyển sang model tiếp theo...")
-            llm_manager.mark_model_cooldown(model_name, duration_sec=30)
+            llm_manager.mark_model_cooldown(model_name, duration_sec=120)
             last_error = "Timeout"
             continue
             
         except Exception as e:
             error_str = str(e).lower()
-            # Bắt lỗi Quota / Rate limit 429 / Quota 0
-            if "quota exceeded" in error_str or "limit: 0" in error_str or "429" in error_str or "resourceexhausted" in error_str:
-                logger.warning(f"⚠️ [{tier.upper()}] Model '{model_name}' bị Rate Limit / Hết Quota: {e}. Tự động failover...")
-                llm_manager.mark_model_cooldown(model_name, duration_sec=60)
+            # Bắt lỗi Quota / Rate limit 429 / 503 Quá tải máy chủ / Service Unavailable
+            if any(k in error_str for k in ["quota exceeded", "limit: 0", "429", "resourceexhausted", "503", "high demand", "unavailable", "serviceunavailable", "overloaded", "deadline"]):
+                logger.warning(f"⚠️ [{tier.upper()}] Model '{model_name}' bị Quota hoặc 503 Quá tải máy chủ: {e}. Tự động failover...")
+                llm_manager.mark_model_cooldown(model_name, duration_sec=120)
                 last_error = e
                 continue
             elif "404" in error_str or "not found" in error_str:
@@ -194,7 +194,7 @@ async def run_master_agent(
     )
     
     try:
-        return await execute_with_cascade("master", prompt, generation_config=gen_config, timeout_sec=35)
+        return await execute_with_cascade("master", prompt, generation_config=gen_config, timeout_sec=30)
     except (QuotaExceededError, CascadeExecutionError) as ce:
         raise ce
     except Exception as e:
