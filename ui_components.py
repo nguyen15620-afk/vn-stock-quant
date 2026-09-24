@@ -435,3 +435,138 @@ def render_equity_comparison_chart(eq_df: pd.DataFrame):
     fig.update_yaxes(gridcolor='#1E293B')
 
     st.plotly_chart(fig, use_container_width=True)
+
+
+def render_financial_metrics_bar(fa_dict: dict):
+    """Hiển thị hàng chỉ số tài chính & định giá theo phong cách Fintech Terminal hiện đại."""
+    if not isinstance(fa_dict, dict) or not any(k in fa_dict for k in ["P/E", "P/B", "ROE", "EPS", "Vốn hóa", "Tăng trưởng DT", "Biên LN Gộp"]):
+        return
+
+    # Định nghĩa cấu hình thẻ chỉ số tiêu chuẩn
+    meta_configs = {
+        "P/E": {
+            "label": "P/E",
+            "badge": "Định giá",
+            "format": lambda v: f"{float(v):.2f}" if isinstance(v, (int, float)) else str(v),
+            "color": lambda v: "#10B981" if (isinstance(v, (int, float)) and v < 15) else "#F1F5F9",
+            "desc": lambda v: "P/E thấp, định giá rẻ" if (isinstance(v, (int, float)) and v < 15) else "P/E trailing"
+        },
+        "P/B": {
+            "label": "P/B",
+            "badge": "Tài sản",
+            "format": lambda v: f"{float(v):.2f}" if isinstance(v, (int, float)) else str(v),
+            "color": lambda v: "#10B981" if (isinstance(v, (int, float)) and v < 1.5) else "#F1F5F9",
+            "desc": lambda v: "Thấp hơn giá trị sổ sách" if (isinstance(v, (int, float)) and v < 1.0) else "P/B chuẩn"
+        },
+        "EPS": {
+            "label": "EPS",
+            "badge": "Lợi nhuận",
+            "format": lambda v: f"{float(str(v).replace('VND','').replace('₫','').replace(',','').strip()):,.0f} ₫" if any(c.isdigit() for c in str(v)) else str(v),
+            "color": lambda v: "#38BDF8",
+            "desc": lambda v: "Lãi cơ bản / Cổ phiếu"
+        },
+        "ROE": {
+            "label": "ROE",
+            "badge": "Hiệu quả",
+            "format": lambda v: f"{float(str(v).replace('%','').strip()):.2f}%" if any(c.isdigit() for c in str(v)) else str(v),
+            "color": lambda v: "#10B981" if ("%" in str(v) and float(str(v).replace('%','').strip()) >= 15) else "#F1F5F9",
+            "desc": lambda v: "Sinh lời trên vốn chủ"
+        },
+        "Vốn hóa": {
+            "label": "Vốn Hóa",
+            "badge": "Quy mô",
+            "format": lambda v: str(v),
+            "color": lambda v: "#C084FC",
+            "desc": lambda v: "Tổng giá trị thị trường"
+        },
+        "Tăng trưởng DT": {
+            "label": "Tăng Trưởng DT",
+            "badge": "Doanh thu",
+            "format": lambda v: str(v),
+            "color": lambda v: "#10B981" if not str(v).startswith("-") else "#F43F5E",
+            "desc": lambda v: "Tăng trưởng so với cùng kỳ"
+        },
+        "Biên LN Gộp": {
+            "label": "Biên Lãi Gộp",
+            "badge": "Biên lợi nhuận",
+            "format": lambda v: str(v),
+            "color": lambda v: "#38BDF8",
+            "desc": lambda v: "Hiệu quả kinh doanh gộp"
+        }
+    }
+
+    # Lọc lấy các key hữu ích theo thứ tự ưu tiên
+    display_keys = []
+    preferred_order = ["P/E", "P/B", "EPS", "ROE", "Vốn hóa", "Tăng trưởng DT", "Biên LN Gộp"]
+    for k in preferred_order:
+        if k in fa_dict:
+            display_keys.append(k)
+
+    for k in fa_dict.keys():
+        if k not in display_keys and k not in ["Mã CP", "Nguồn dữ liệu", "Lưu ý phân tích", "Định giá P/E & P/B"]:
+            display_keys.append(k)
+
+    display_keys = display_keys[:5]
+
+    if not display_keys:
+        return
+
+    cards_html = []
+    for k in display_keys:
+        raw_val = fa_dict[k]
+        conf = meta_configs.get(k)
+
+        if conf:
+            lbl = conf["label"]
+            badge = conf["badge"]
+            try:
+                val_str = conf["format"](raw_val)
+            except Exception:
+                val_str = str(raw_val)
+            try:
+                val_color = conf["color"](raw_val)
+            except Exception:
+                val_color = "#F8FAFC"
+            try:
+                desc = conf["desc"](raw_val)
+            except Exception:
+                desc = ""
+        else:
+            lbl = str(k).upper()
+            badge = "FA"
+            val_str = str(raw_val)
+            val_color = "#F8FAFC"
+            desc = ""
+
+        badge_html = f'<span class="fa-card-badge">{badge}</span>' if badge else ''
+        desc_html = f'<div class="fa-card-desc">{desc}</div>' if desc else ''
+
+        card = f"""
+        <div class="fa-card">
+            <div class="fa-card-header">
+                <span class="fa-card-label">{lbl}</span>
+                {badge_html}
+            </div>
+            <div class="fa-card-value" style="color: {val_color};" title="{val_str}">{val_str}</div>
+            {desc_html}
+        </div>
+        """
+        cards_html.append(card)
+
+    source = fa_dict.get("Nguồn dữ liệu", "")
+    source_html = f'<span style="color:#64748B; font-size:11px; font-weight:500;">Nguồn: {source}</span>' if source else ''
+
+    full_html = f"""
+    <div style="margin-top: 14px; margin-bottom: 18px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <span style="font-size:13px; font-weight:700; color:#CBD5E1; letter-spacing:0.3px; text-transform:uppercase;">
+                📊 Chỉ Số Tài Chính & Định Giá Doanh Nghiệp
+            </span>
+            {source_html}
+        </div>
+        <div class="fa-grid">
+            {''.join(cards_html)}
+        </div>
+    </div>
+    """
+    st.markdown(full_html, unsafe_allow_html=True)

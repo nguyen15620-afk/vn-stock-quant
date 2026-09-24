@@ -250,6 +250,77 @@ html, body, [class*="css"], .stApp {
     margin-top: 4px;
 }
 
+/* Financial Ratio Metrics Grid */
+.fa-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px;
+    margin-top: 6px;
+    margin-bottom: 6px;
+}
+
+.fa-card {
+    background: linear-gradient(135deg, #131A29 0%, #172033 100%);
+    border: 1px solid #242F42;
+    border-radius: 10px;
+    padding: 10px 14px;
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.fa-card:hover {
+    border-color: #38BDF8;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    transform: translateY(-1px);
+}
+
+.fa-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.fa-card-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #94A3B8;
+}
+
+.fa-card-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(56, 189, 248, 0.12);
+    color: #38BDF8;
+    border: 1px solid rgba(56, 189, 248, 0.25);
+}
+
+.fa-card-value {
+    font-size: 19px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    color: #F8FAFC;
+    letter-spacing: -0.3px;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.fa-card-desc {
+    font-size: 11px;
+    color: #64748B;
+    margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 /* Agent Accordion / Speech Bubble */
 .agent-box {
     background: #141B29;

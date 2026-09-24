@@ -39,7 +39,8 @@ from ui_components import (
     render_agent_reports,
     render_advanced_chart,
     render_kpi_dashboard,
-    render_equity_comparison_chart
+    render_equity_comparison_chart,
+    render_financial_metrics_bar
 )
 from data_loader import load_historical_data, VN30
 from data_fetcher import get_fundamental_data, get_macro_flow, get_latest_news
@@ -391,14 +392,8 @@ with tab_ai:
                     
                     render_advanced_chart(df_stock, ticker, subchart_type=subchart_type)
                     
-                    # Thẻ thông số cơ bản (FA Ratios)
-                    if isinstance(fa_dict, dict) and any(k in fa_dict for k in ["P/E", "P/B", "ROE", "EPS", "Vốn hóa"]):
-                        st.markdown("**🏢 Chỉ số Tài chính & Định giá:**")
-                        fa_cols = st.columns(min(len(fa_dict), 4))
-                        fa_keys = [k for k in fa_dict.keys() if k not in ["Mã CP", "Nguồn dữ liệu", "Lưu ý phân tích"]][:4]
-                        for idx, k in enumerate(fa_keys):
-                            with fa_cols[idx]:
-                                st.metric(k, str(fa_dict[k]))
+                    # Thẻ thông số cơ bản (FA Ratios) thiết kế Fintech chuyên nghiệp
+                    render_financial_metrics_bar(fa_dict)
                                 
                 with col_right:
                     # Quyết định Master Agent
