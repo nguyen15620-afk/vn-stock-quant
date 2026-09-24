@@ -200,7 +200,7 @@ def render_advanced_chart(df: pd.DataFrame, ticker: str, subchart_type: str = "M
         shared_xaxes=True,
         vertical_spacing=0.03, 
         row_heights=[0.60, 0.20, 0.20],
-        subplot_titles=(f"{ticker} - OHLCV & Đường Xu Hướng", "Khối Lượng Giao Dịch", subchart_type)
+        subplot_titles=("", "Khối Lượng Giao Dịch", subchart_type)
     )
 
     # 1. Candlestick Price
@@ -216,13 +216,15 @@ def render_advanced_chart(df: pd.DataFrame, ticker: str, subchart_type: str = "M
         fig.add_trace(go.Scatter(
             x=df['time'], y=df['bb_high'],
             line=dict(color='rgba(148, 163, 184, 0.4)', width=1, dash='dash'),
-            name="BB Upper"
+            name="BB (20,2)",
+            showlegend=True
         ), row=1, col=1)
         fig.add_trace(go.Scatter(
             x=df['time'], y=df['bb_low'],
             line=dict(color='rgba(148, 163, 184, 0.4)', width=1, dash='dash'),
             fill='tonexty', fillcolor='rgba(148, 163, 184, 0.05)',
-            name="BB Lower"
+            name="BB Lower",
+            showlegend=False
         ), row=1, col=1)
 
     # Moving Averages
@@ -247,41 +249,49 @@ def render_advanced_chart(df: pd.DataFrame, ticker: str, subchart_type: str = "M
             fig.add_trace(go.Scatter(
                 x=buys['time'], y=buys['low'] * 0.985, mode='markers',
                 marker=dict(symbol='triangle-up', size=11, color='#00E676'),
-                name="Tín hiệu MUA"
+                name="Tín hiệu MUA",
+                showlegend=False
             ), row=1, col=1)
         if not sells.empty:
             fig.add_trace(go.Scatter(
                 x=sells['time'], y=sells['high'] * 1.015, mode='markers',
                 marker=dict(symbol='triangle-down', size=11, color='#FF1744'),
-                name="Tín hiệu BÁN"
+                name="Tín hiệu BÁN",
+                showlegend=False
             ), row=1, col=1)
 
     # 2. Volume Bar
     vol_colors = ['#00E676' if c >= o else '#FF1744' for c, o in zip(df['close'], df['open'])]
     fig.add_trace(go.Bar(
-        x=df['time'], y=df['volume'], marker_color=vol_colors, opacity=0.8, name="Volume"
+        x=df['time'], y=df['volume'], marker_color=vol_colors, opacity=0.8, name="Volume",
+        showlegend=False
     ), row=2, col=1)
     
     if 'vol_sma20' in df.columns:
         fig.add_trace(go.Scatter(
-            x=df['time'], y=df['vol_sma20'], line=dict(color='#F59E0B', width=1.2), name="Vol SMA20"
+            x=df['time'], y=df['vol_sma20'], line=dict(color='#F59E0B', width=1.2), name="Vol SMA20",
+            showlegend=False
         ), row=2, col=1)
 
     # 3. Indicator Subplot (MACD hoặc RSI)
     if subchart_type == "MACD" and 'macd' in df.columns:
         fig.add_trace(go.Scatter(
-            x=df['time'], y=df['macd'], line=dict(color='#38BDF8', width=1.5), name="MACD"
+            x=df['time'], y=df['macd'], line=dict(color='#38BDF8', width=1.5), name="MACD",
+            showlegend=False
         ), row=3, col=1)
         fig.add_trace(go.Scatter(
-            x=df['time'], y=df['macd_signal'], line=dict(color='#F59E0B', width=1.2), name="Signal"
+            x=df['time'], y=df['macd_signal'], line=dict(color='#F59E0B', width=1.2), name="Signal",
+            showlegend=False
         ), row=3, col=1)
         hist_colors = ['#00E676' if v >= 0 else '#FF1744' for v in df['macd_hist']]
         fig.add_trace(go.Bar(
-            x=df['time'], y=df['macd_hist'], marker_color=hist_colors, opacity=0.7, name="Hist"
+            x=df['time'], y=df['macd_hist'], marker_color=hist_colors, opacity=0.7, name="Hist",
+            showlegend=False
         ), row=3, col=1)
     elif subchart_type == "RSI" and 'rsi' in df.columns:
         fig.add_trace(go.Scatter(
-            x=df['time'], y=df['rsi'], line=dict(color='#C084FC', width=1.8), name="RSI (14)"
+            x=df['time'], y=df['rsi'], line=dict(color='#C084FC', width=1.8), name="RSI (14)",
+            showlegend=False
         ), row=3, col=1)
         fig.add_hline(y=70, line_dash="dash", line_color="rgba(244, 63, 94, 0.6)", row=3, col=1)
         fig.add_hline(y=30, line_dash="dash", line_color="rgba(16, 185, 129, 0.6)", row=3, col=1)
@@ -293,9 +303,9 @@ def render_advanced_chart(df: pd.DataFrame, ticker: str, subchart_type: str = "M
         xaxis_rangeslider_visible=False,
         paper_bgcolor='#121721',
         plot_bgcolor='#121721',
-        margin=dict(l=10, r=10, t=30, b=10),
+        margin=dict(l=10, r=10, t=35, b=10),
         legend=dict(
-            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+            orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
             font=dict(size=11, color='#94A3B8')
         ),
         font=dict(family="Inter, sans-serif", color='#94A3B8'),
@@ -305,7 +315,11 @@ def render_advanced_chart(df: pd.DataFrame, ticker: str, subchart_type: str = "M
     fig.update_xaxes(gridcolor='#1E293B', zeroline=False)
     fig.update_yaxes(gridcolor='#1E293B', zeroline=False)
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(
+        fig, 
+        use_container_width=True,
+        config={'displayModeBar': 'hover', 'displaylogo': False}
+    )
 
 
 def render_kpi_dashboard(bt_results: dict):
@@ -538,35 +552,31 @@ def render_financial_metrics_bar(fa_dict: dict):
             val_color = "#F8FAFC"
             desc = ""
 
-        badge_html = f'<span class="fa-card-badge">{badge}</span>' if badge else ''
-        desc_html = f'<div class="fa-card-desc">{desc}</div>' if desc else ''
-
-        card = f"""
-        <div class="fa-card">
-            <div class="fa-card-header">
-                <span class="fa-card-label">{lbl}</span>
-                {badge_html}
-            </div>
-            <div class="fa-card-value" style="color: {val_color};" title="{val_str}">{val_str}</div>
-            {desc_html}
-        </div>
-        """
+        card = (
+            f'<div class="fa-card">'
+            f'<div class="fa-card-header">'
+            f'<span class="fa-card-label">{lbl}</span>'
+            f'{badge_html}'
+            f'</div>'
+            f'<div class="fa-card-value" style="color: {val_color};" title="{val_str}">{val_str}</div>'
+            f'{desc_html}'
+            f'</div>'
+        )
         cards_html.append(card)
 
     source = fa_dict.get("Nguồn dữ liệu", "")
     source_html = f'<span style="color:#64748B; font-size:11px; font-weight:500;">Nguồn: {source}</span>' if source else ''
 
-    full_html = f"""
-    <div style="margin-top: 14px; margin-bottom: 18px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <span style="font-size:13px; font-weight:700; color:#CBD5E1; letter-spacing:0.3px; text-transform:uppercase;">
-                📊 Chỉ Số Tài Chính & Định Giá Doanh Nghiệp
-            </span>
-            {source_html}
-        </div>
-        <div class="fa-grid">
-            {''.join(cards_html)}
-        </div>
-    </div>
-    """
+    cards_joined = "".join(cards_html)
+    full_html = (
+        f'<div style="margin-top: 14px; margin-bottom: 18px;">'
+        f'<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">'
+        f'<span style="font-size:13px; font-weight:700; color:#CBD5E1; letter-spacing:0.3px; text-transform:uppercase;">'
+        f'📊 Chỉ Số Tài Chính & Định Giá Doanh Nghiệp'
+        f'</span>'
+        f'{source_html}'
+        f'</div>'
+        f'<div class="fa-grid">{cards_joined}</div>'
+        f'</div>'
+    )
     st.markdown(full_html, unsafe_allow_html=True)

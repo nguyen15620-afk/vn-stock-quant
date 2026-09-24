@@ -379,14 +379,15 @@ with tab_ai:
                 
                 with col_left:
                     # Tùy chọn chỉ báo cho Subplot
-                    sub_c1, sub_c2 = st.columns([2, 1])
+                    sub_c1, sub_c2 = st.columns([2.2, 1])
                     with sub_c1:
-                        st.markdown(f"**Biểu đồ kỹ thuật {ticker}** (OHLCV, Bollinger Bands, EMA)")
+                        st.markdown(f"📈 **Biểu đồ Kỹ thuật {ticker}** (OHLCV, Bollinger Bands, EMA)")
                     with sub_c2:
                         subchart_type = st.radio(
                             "Chỉ báo phụ:",
                             ["MACD", "RSI"],
                             horizontal=True,
+                            label_visibility="collapsed",
                             key=f"subchart_{ticker}"
                         )
                     
