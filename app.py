@@ -42,13 +42,14 @@ from ui_components import (
     render_equity_comparison_chart,
     render_financial_metrics_bar
 )
-from data_loader import load_historical_data, VN30
+from data_loader import load_historical_data, load_fundamentals, VN30
 from data_fetcher import get_fundamental_data, get_macro_flow, get_latest_news
 from strategy import compute_indicators, generate_signals
 from ai_agents import analyze_stock_async, configure_gemini, QuotaExceededError, CascadeExecutionError
 from notifier import send_telegram_alert, send_telegram_message
 from backtester import run_backtest
-from alert_bot import run_quant_scan
+from alert_bot import run_quant_scan, heartbeat_check
+from gemini_bridge_client import is_edge_cdp_available, ask_gemini_4_argon_sync
 
 # ==============================================================================
 # HÀM XỬ LÝ DỮ LIỆU BATCH ĐỒNG THỜI (ASYNC CONCURRENT)
@@ -250,8 +251,9 @@ render_header(
 # MAIN NAVIGATION TABS (3 TABS)
 # ==============================================================================
 
-tab_ai, tab_backtest, tab_alert = st.tabs([
+tab_ai, tab_argon, tab_backtest, tab_alert = st.tabs([
     "🚀 Phân Tích Đa Tác Tử AI (Multi-Agent)",
+    "⚡ Tham Vấn Gemini 4 Argon (Edge CDP)",
     "📈 Kiểm Định Chiến Lược Quant (Backtest)",
     "🔔 Quản Lý & Cấu Hình Alert Bot"
 ])
@@ -410,7 +412,128 @@ with tab_ai:
 
 
 # ==============================================================================
-# TAB 2: KIỂM ĐỊNH CHIẾN LƯỢC QUANT (BACKTEST)
+# TAB 2: THAM VẤN GEMINI 4 ARGON (EDGE CDP BRIDGE)
+# ==============================================================================
+
+with tab_argon:
+    st.markdown("### ⚡ Tham Vấn Chiến Lược Chuyên Sâu Cùng Gemini 4 Argon Pro")
+    st.caption("Cầu nối tự động qua Chrome DevTools Protocol (CDP) kết nối trực tiếp tab Microsoft Edge. Tận dụng tối đa trí tuệ mô hình đầu bảng không phụ thuộc API Key trả phí.")
+    
+    cdp_status = is_edge_cdp_available()
+    
+    col_stat1, col_stat2 = st.columns([2.2, 0.8])
+    with col_stat1:
+        if cdp_status.get("available") and cdp_status.get("tab_found"):
+            st.markdown("""
+            <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid #10B981; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;">
+                <span style="color: #34D399; font-weight: 700; font-size: 15px;">🟢 ĐÃ KẾT NỐI GEMINI 4 ARGON PRO (EDGE CDP PORT 9222)</span>
+                <div style="color: #CBD5E1; font-size: 13px; margin-top: 4px;">Sẵn sàng thẩm định hành vi nến, bẫy bull-trap nội phiên, dòng tiền khối ngoại và tư vấn chiến lược phiên ATC.</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            err = cdp_status.get("error", "Chưa bật cổng 9222 hoặc thiếu tab gemini.google.com")
+            st.markdown(f"""
+            <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid #EF4444; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;">
+                <span style="color: #F87171; font-weight: 700; font-size: 15px;">🔴 CHƯA KẾT NỐI ĐƯỢC VỚI MICROSOFT EDGE DEBUG</span>
+                <div style="color: #CBD5E1; font-size: 13px; margin-top: 4px;">• Lỗi: <code>{err}</code></div>
+                <div style="color: #94A3B8; font-size: 13px; margin-top: 4px;">• Cách khắc phục: Chạy file <code>f:\\AI\\MCP\\start_edge_debug.bat</code> và mở tab Gemini (model 4 Argon).</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    with col_stat2:
+        if st.button("🔄 Kiểm Tra Kết Nối", key="btn_check_cdp_argon", use_container_width=True):
+            st.rerun()
+
+    # Form nhập mã phân tích
+    col_arg1, col_arg2, col_arg3 = st.columns([1.2, 1.8, 1.0])
+    with col_arg1:
+        argon_ticker = st.text_input("Mã cổ phiếu cần tham vấn:", value="FPT", key="argon_ticker_input").upper().strip()
+    with col_arg2:
+        argon_focus = st.multiselect(
+            "Trọng tâm phân tích chuyên sâu:",
+            [
+                "Hành vi nến nội phiên (CLV & Bẫy Bull-trap)",
+                "Dòng tiền Khối ngoại & Tự doanh",
+                "Sóng ngành đồng thuận (Sector Synergy)",
+                "Khuyến nghị phiên ATC (Mua ATC/Chờ rung lắc)",
+                "Cắt lỗ động theo ATR & MA50"
+            ],
+            default=[
+                "Hành vi nến nội phiên (CLV & Bẫy Bull-trap)",
+                "Dòng tiền Khối ngoại & Tự doanh",
+                "Khuyến nghị phiên ATC (Mua ATC/Chờ rung lắc)"
+            ]
+        )
+    with col_arg3:
+        st.write("")
+        st.write("")
+        ask_argon_btn = st.button("⚡ Hỏi Gemini 4", key="btn_ask_argon_main", type="primary", use_container_width=True)
+
+    if ask_argon_btn:
+        if not cdp_status.get("available") or not cdp_status.get("tab_found"):
+            st.error("⚠️ Vui lòng mở Microsoft Edge với file `start_edge_debug.bat` và tab Gemini trước khi gửi câu hỏi!")
+        else:
+            with st.spinner(f"Đang trích xuất dữ liệu nến, volume, chỉ báo của {argon_ticker} và chuyển sang Gemini 4 Argon..."):
+                df_stock = load_historical_data(argon_ticker, months=6)
+                if df_stock.empty:
+                    st.error(f"Không thể tải dữ liệu nến cho mã {argon_ticker}.")
+                else:
+                    df_stock = compute_indicators(df_stock)
+                    latest = df_stock.iloc[-1]
+                    high_val = float(latest.get('high', latest['close']))
+                    low_val = float(latest.get('low', latest['close']))
+                    close_val = float(latest['close'])
+                    clv = (close_val - low_val) / (high_val - low_val) if high_val > low_val else 0.8
+                    vol_curr = float(latest.get('volume', 0))
+                    vol_ma20 = float(latest.get('vol_sma20', vol_curr)) if 'vol_sma20' in latest else vol_curr
+                    vol_ratio = (vol_curr / vol_ma20) if vol_ma20 > 0 else 1.5
+                    
+                    fa = load_fundamentals(argon_ticker)
+                    
+                    # VNINDEX
+                    df_vni = load_historical_data("VNINDEX", months=6)
+                    vni_val = float(df_vni.iloc[-1]['close']) if not df_vni.empty else 1280.0
+                    vni_ma50 = float(df_vni['close'].rolling(50).mean().iloc[-1]) if not df_vni.empty else 1260.0
+                    vni_status = "UPTREND (TRÊN MA50)" if vni_val > vni_ma50 else "DOWNTREND/SIDEWAY"
+                    
+                    prompt = (
+                        f"=== [PERSONA: SENIOR QUANTITATIVE TRADING STRATEGIST (GEMINI 4 ARGON PRO)] ===\n"
+                        f"Bạn là Giám đốc Chiến lược Giao dịch Định lượng Chứng khoán Việt Nam.\n\n"
+                        f"### DỮ LIỆU CỔ PHIẾU {argon_ticker} TẠI THỜI ĐIỂM CẬN PHIÊN ATC:\n"
+                        f"- Thị trường chung VN-INDEX: {vni_val:,.1f} | MA50: {vni_ma50:,.1f} ({vni_status})\n"
+                        f"- Giá đóng cửa hiện tại: {close_val:,.0f} ₫ (Biên độ nến: High {high_val:,.0f} - Low {low_val:,.0f})\n"
+                        f"- Close Location Value (CLV): {clv:.2f} (Tỷ lệ đóng nến trong biên độ)\n"
+                        f"- Volume nến hiện tại so với MA20 Volume: {vol_ratio:.1f}x\n"
+                        f"- RSI(14): {float(latest.get('rsi', 50)):.1f} | MACD Hist: {float(latest.get('macd_hist', 0)):.2f}\n"
+                        f"- Chỉ số cơ bản: P/E={fa.get('PE', 'N/A')} | ROE={fa.get('ROE', 0)*100 if isinstance(fa.get('ROE'), (int, float)) else 'N/A'}%\n"
+                        f"- Các khía cạnh người dùng quan tâm: {', '.join(argon_focus)}\n\n"
+                        f"### YÊU CẦU THỰC HIỆN:\n"
+                        f"1. Phân tích giải phẫu cây nến hôm nay: Có hiện tượng rút chân thật hay bẫy Bull-trap xả hàng cận ATC?\n"
+                        f"2. Đánh giá xác suất thành công hàng về T+2.5.\n"
+                        f"3. ĐƯA RA QUYẾT ĐỊNH DỨT KHOÁT: MUA ATC / ĐẶT LỆNH LO CHỜ RUNG LẮC / BỎ QUA.\n"
+                        f"4. Thiết lập Kế hoạch giao dịch chi tiết: Tỷ trọng giải ngân (% NAV), Vùng giá giải ngân, Ngưỡng Cắt Lỗ Động và Mục Tiêu Chốt Lời.\n\n"
+                        f"Hãy trình bày trực diện, chuyên nghiệp, có cấu trúc bullet point rõ ràng."
+                    )
+                    
+                    success, verdict = ask_gemini_4_argon_sync(prompt, timeout_sec=65)
+                    if success:
+                        st.session_state.last_argon_verdict = verdict
+                        st.session_state.last_argon_ticker = argon_ticker
+                    else:
+                        st.error(f"❌ Không thể nhận phản hồi từ Gemini 4: {verdict}")
+
+    if "last_argon_verdict" in st.session_state and st.session_state.last_argon_verdict:
+        st.markdown("---")
+        st.markdown(f"#### 🧠 Bản Đánh Giá Chiến Lược Chuyên Sâu: **{st.session_state.last_argon_ticker}** (Bởi Gemini 4 Argon Pro)")
+        st.markdown(f"""
+        <div class="fintech-card" style="border-left: 4px solid #38BDF8; line-height: 1.8;">
+        {st.session_state.last_argon_verdict}
+        </div>
+        """, unsafe_allow_html=True)
+
+
+# ==============================================================================
+# TAB 3: KIỂM ĐỊNH CHIẾN LƯỢC QUANT (BACKTEST)
 # ==============================================================================
 
 with tab_backtest:
@@ -501,25 +624,25 @@ with tab_backtest:
 
 
 # ==============================================================================
-# TAB 3: QUẢN LÝ & CẤU HÌNH ALERT BOT
+# TAB 4: QUẢN LÝ & CẤU HÌNH ALERT BOT (DUAL-STAGE QUANT + AI)
 # ==============================================================================
 
 with tab_alert:
-    st.markdown("### 🔔 Quản Lý & Giám Sát Quant Alert Bot")
-    st.caption("Hệ thống tự động quét bộ lọc Quant cho toàn bộ rổ VN30 trước phiên ATC lúc 14:30 hàng ngày và gửi thông báo qua Telegram.")
+    st.markdown("### 🔔 Quản Lý & Giám Sát Dual-Stage Alert Bot")
+    st.caption("Cơ chế cảnh báo 2 pha trước phiên ATC: Pha 1 (14:26 - Quant Signals) và Pha 2 (14:28 - Thẩm định chiến lược bởi Gemini 4 Argon Pro).")
     
     col_bot1, col_bot2 = st.columns([1.5, 1.5])
     
     with col_bot1:
         st.markdown("""
         <div class="fintech-card">
-            <h4 style="margin-top:0; color:#38BDF8;">🤖 Trạng Thái Hoạt Động Của Bot</h4>
-            <div style="font-size:13px; line-height:1.7; color:#CBD5E1;">
-                <div>• <strong>Lịch trình:</strong> Tự động quét lúc <strong>14:30</strong> các ngày Thứ 2 đến Thứ 6</div>
-                <div>• <strong>Mục tiêu quét:</strong> Rổ 30 cổ phiếu đầu ngành <strong>VN30</strong></div>
-                <div>• <strong>Bộ lọc Cơ bản:</strong> P/E &lt; 25 và ROE &gt; 10%</div>
-                <div>• <strong>Bộ lọc Kỹ thuật:</strong> Trend Following + Khung Tuần MTF</div>
-                <div>• <strong>Bộ lọc Vĩ mô:</strong> Market Regime (VN-INDEX &gt; SMA50)</div>
+            <h4 style="margin-top:0; color:#38BDF8;">🤖 Lịch Trình Tự Động Hóa Vận Hành</h4>
+            <div style="font-size:13px; line-height:1.8; color:#CBD5E1;">
+                <div>• <strong>14:15:</strong> Pre-flight Heartbeat kiểm tra kết nối Edge CDP (Port 9222).</div>
+                <div>• <strong>14:25:</strong> Quant Engine lọc toàn bộ 30 mã VN30 (Trend + MTF + FA).</div>
+                <div>• <strong>14:26 (Pha 1):</strong> Bắn danh sách mã thô sang Telegram để NĐT chuẩn bị app.</div>
+                <div>• <strong>14:28 (Pha 2):</strong> Gemini 4 Argon trả về nhận định ATC, tỷ trọng & cắt lỗ động.</div>
+                <div>• <strong>14:30 - 14:45:</strong> Phiên ATC diễn ra, NĐT vào lệnh tự tin với đầy đủ góc nhìn AI.</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -527,25 +650,38 @@ with tab_alert:
     with col_bot2:
         st.markdown("""
         <div class="fintech-card">
-            <h4 style="margin-top:0; color:#10B981;">🚀 Kích Hoạt Quét Thủ Công Ngay</h4>
-            <p style="font-size:13px; color:#94A3B8;">Chạy quét toàn bộ 30 mã VN30 ngay lập tức và gửi thông báo qua kênh Telegram đã cấu hình.</p>
+            <h4 style="margin-top:0; color:#10B981;">🚀 Kiểm Tra & Kích Hoạt Thủ Công</h4>
+            <p style="font-size:13px; color:#94A3B8;">Chạy kiểm tra kết nối Heartbeat hoặc quét toàn bộ quy trình Dual-Stage ngay lập tức.</p>
         </div>
         """, unsafe_allow_html=True)
         
-        run_scan_btn = st.button("▶️ Chạy Quét VN30 & Gửi Cảnh Báo Ngay", type="primary", use_container_width=True)
+        col_btn_hb, col_btn_scan = st.columns(2)
+        with col_btn_hb:
+            btn_heartbeat = st.button("💓 Test Heartbeat 14:15", use_container_width=True)
+        with col_btn_scan:
+            enable_ai_check = st.checkbox("Bật Pha 2 (Gemini 4)", value=True)
+            run_scan_btn = st.button("▶️ Quét Dual-Stage Ngay", type="primary", use_container_width=True)
+
+    if btn_heartbeat:
+        with st.spinner("Đang kiểm tra kết nối Heartbeat tới Edge CDP..."):
+            status = is_edge_cdp_available()
+            if status.get("available") and status.get("tab_found"):
+                st.success("✅ [HEARTBEAT OK] Edge CDP Port 9222 sẵn sàng và tìm thấy tab Gemini (Argon)!")
+            else:
+                st.error(f"❌ [HEARTBEAT FAILED] {status.get('error', 'Chưa mở Edge hoặc thiếu tab Gemini')}")
 
     # Khi người dùng nhấn nút quét thủ công
     if run_scan_btn:
-        with st.spinner("Đang quét toàn bộ rổ VN30 và tính toán tín hiệu Quant..."):
+        with st.spinner("Đang thực thi quy trình quét Dual-Stage (Pha 1 Quant + Pha 2 Gemini 4 Argon)..."):
             try:
-                market_status, buy_signals, telegram_msg = run_quant_scan()
+                market_status, buy_signals, msg_p1, ai_verdict = run_quant_scan(enable_ai_verdict=enable_ai_check)
                 
                 st.markdown("---")
-                st.markdown("#### 📊 Kết Quả Quét Trực Tiếp:")
+                st.markdown("#### 📊 Kết Quả Quét Dual-Stage Trực Tiếp:")
                 st.info(f"**Trạng thái VN-INDEX:** {market_status}")
                 
                 if buy_signals:
-                    st.success(f"🎉 Phát hiện **{len(buy_signals)}** mã đạt tiêu chuẩn MUA:")
+                    st.success(f"🎉 Pha 1 phát hiện **{len(buy_signals)}** mã đạt tiêu chuẩn MUA:")
                     b_cols = st.columns(min(len(buy_signals), 3))
                     for b_idx, s in enumerate(buy_signals):
                         with b_cols[b_idx % min(len(buy_signals), 3)]:
@@ -554,6 +690,9 @@ with tab_alert:
                                 <div style="font-size:18px; font-weight:800; color:#34D399;">🚀 {s['ticker']}</div>
                                 <div style="font-size:14px; margin-top:4px;">Giá: <strong>{s['price']:,.0f} ₫</strong></div>
                                 <div style="font-size:12px; color:#94A3B8; margin-top:4px;">
+                                    CLV: <strong>{s['clv']:.2f}</strong> | Vol: <strong>{s['vol_ratio']:.1f}x</strong>
+                                </div>
+                                <div style="font-size:12px; color:#94A3B8; margin-top:2px;">
                                     Điểm: <strong>{s['score']}/100</strong> | P/E: {s['pe']:.1f} | ROE: {s['roe']*100:.1f}%
                                 </div>
                                 <div style="font-size:12px; color:#E2E8F0; margin-top:6px; background:#0F141C; padding:6px; border-radius:4px;">
@@ -561,6 +700,15 @@ with tab_alert:
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
+                            
+                    if ai_verdict:
+                        st.markdown("---")
+                        st.markdown("#### 🧠 Pha 2: Thẩm Định Chiến Lược ATC Từ Gemini 4 Argon Pro:")
+                        st.markdown(f"""
+                        <div class="fintech-card" style="border-left: 4px solid #38BDF8; line-height: 1.8;">
+                        {ai_verdict}
+                        </div>
+                        """, unsafe_allow_html=True)
                 else:
                     st.warning("Không có mã VN30 nào đạt tiêu chuẩn MUA trong phiên hôm nay.")
             except Exception as e:
