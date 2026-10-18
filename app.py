@@ -49,7 +49,7 @@ from ai_agents import analyze_stock_async, configure_gemini, QuotaExceededError,
 from notifier import send_telegram_alert, send_telegram_message
 from backtester import run_backtest
 from alert_bot import run_quant_scan, heartbeat_check
-from gemini_bridge_client import is_edge_cdp_available, ask_gemini_4_argon_sync
+from gemini_bridge_client import is_edge_cdp_available, ask_gemini_4_argon_sync, ask_gemini_via_api
 
 # ==============================================================================
 # HÀM XỬ LÝ DỮ LIỆU BATCH ĐỒNG THỜI (ASYNC CONCURRENT)
@@ -416,33 +416,71 @@ with tab_ai:
 # ==============================================================================
 
 with tab_argon:
-    st.markdown("### ⚡ Tham Vấn Chiến Lược Chuyên Sâu Cùng Gemini 4 Argon Pro")
-    st.caption("Cầu nối tự động qua Chrome DevTools Protocol (CDP) kết nối trực tiếp tab Microsoft Edge. Tận dụng tối đa trí tuệ mô hình đầu bảng không phụ thuộc API Key trả phí.")
+    st.markdown("### ⚡ Tham Vấn Chiến Lược Chuyên Sâu Cùng Gemini AI")
+    st.caption("Thẩm định hành vi nến nội phiên, Close Location Value (CLV), bẫy Bull-trap và chiến lược trước giờ ATC.")
     
-    cdp_status = is_edge_cdp_available()
-    
-    col_stat1, col_stat2 = st.columns([2.2, 0.8])
-    with col_stat1:
-        if cdp_status.get("available") and cdp_status.get("tab_found"):
+    # Bộ chọn chế độ AI (Local Edge CDP vs Cloud Mode API)
+    col_mode_sel, col_mode_cfg = st.columns([2.0, 1.0])
+    with col_mode_sel:
+        ai_mode = st.radio(
+            "Phương thức kết nối AI:",
+            ["🖥️ Edge CDP Bridge (Miễn phí qua Web Gemini 4 Argon)", "☁️ Cloud Mode (Chạy qua Gemini API Key)"],
+            horizontal=True,
+            help="Edge CDP Bridge kết nối tab Edge trên máy cá nhân. Cloud Mode gọi trực tiếp API của Google phù hợp khi dùng trên Streamlit Cloud."
+        )
+
+    # Nếu dùng Edge CDP, cho phép cấu hình URL (mặc định 127.0.0.1:9222 hoặc Tunnel)
+    custom_endpoint = "http://127.0.0.1:9222"
+    if "Edge CDP Bridge" in ai_mode:
+        with st.expander("⚙️ Cấu hình địa chỉ Bridge (Nếu dùng Tunnel từ xa)", expanded=False):
+            custom_endpoint = st.text_input(
+                "CDP Endpoint URL:",
+                value="http://127.0.0.1:9222",
+                help="Nếu dùng trên máy: giữ nguyên http://127.0.0.1:9222. Nếu dùng trên Streamlit Cloud: nhập URL Ngrok hoặc Cloudflare Tunnel."
+            ).strip()
+
+        cdp_status = is_edge_cdp_available(base_url=custom_endpoint)
+        col_stat1, col_stat2 = st.columns([2.2, 0.8])
+        with col_stat1:
+            if cdp_status.get("available") and cdp_status.get("tab_found"):
+                st.markdown("""
+                <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid #10B981; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;">
+                    <span style="color: #34D399; font-weight: 700; font-size: 15px;">🟢 ĐÃ KẾT NỐI GEMINI 4 ARGON PRO (EDGE CDP PORT 9222)</span>
+                    <div style="color: #CBD5E1; font-size: 13px; margin-top: 4px;">Sẵn sàng thẩm định hành vi nến, bẫy bull-trap nội phiên, dòng tiền khối ngoại và tư vấn chiến lược phiên ATC.</div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                err = cdp_status.get("error", "Chưa bật cổng 9222 hoặc thiếu tab gemini.google.com")
+                st.markdown(f"""
+                <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid #F59E0B; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;">
+                    <span style="color: #FBBF24; font-weight: 700; font-size: 15px;">⚠️ CHƯA KẾT NỐI ĐƯỢC VỚI TRÌNH DUYỆT EDGE TRÊN MÁY TÍNH CỦA BẠN</span>
+                    <div style="color: #CBD5E1; font-size: 13px; margin-top: 6px;">
+                        • <strong>Lý do:</strong> Nếu bạn đang mở link <code>*.streamlit.app</code> (Streamlit Cloud), máy chủ đám mây không thể tự động kết nối cổng 127.0.0.1 trên máy tính của bạn.<br>
+                        • <strong>Cách 1 (Khuyên dùng):</strong> Chạy ứng dụng cục bộ trên máy tính của bạn bằng lệnh <code>streamlit run app.py</code> (truy cập <code>http://localhost:8501</code>).<br>
+                        • <strong>Cách 2 (Tiện lợi nhất trên Cloud):</strong> Chuyển sang nút <strong>☁️ Cloud Mode</strong> ở trên và nhập API Key ở thanh bên (sidebar) để phân tích ngay.<br>
+                        • <strong>Cách 3:</strong> Mở tunnel bằng lệnh <code>ngrok http 9222</code> trên máy và dán URL vào mục cấu hình phía trên.
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        with col_stat2:
+            if st.button("🔄 Kiểm Tra Lại", key="btn_check_cdp_argon", use_container_width=True):
+                st.rerun()
+    else:
+        # Cloud Mode qua API
+        if api_key_input:
             st.markdown("""
-            <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid #10B981; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;">
-                <span style="color: #34D399; font-weight: 700; font-size: 15px;">🟢 ĐÃ KẾT NỐI GEMINI 4 ARGON PRO (EDGE CDP PORT 9222)</span>
-                <div style="color: #CBD5E1; font-size: 13px; margin-top: 4px;">Sẵn sàng thẩm định hành vi nến, bẫy bull-trap nội phiên, dòng tiền khối ngoại và tư vấn chiến lược phiên ATC.</div>
+            <div style="background: rgba(56, 189, 248, 0.1); border: 1px solid #38BDF8; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;">
+                <span style="color: #38BDF8; font-weight: 700; font-size: 15px;">☁️ CHẾ ĐỘ CLOUD MODE (GEMINI API) ĐÃ SẴN SÀNG</span>
+                <div style="color: #CBD5E1; font-size: 13px; margin-top: 4px;">Sử dụng Google GenAI API Key cấu hình ở thanh bên (sidebar). Hoạt động hoàn hảo trên mọi thiết bị và máy chủ Cloud.</div>
             </div>
             """, unsafe_allow_html=True)
         else:
-            err = cdp_status.get("error", "Chưa bật cổng 9222 hoặc thiếu tab gemini.google.com")
-            st.markdown(f"""
+            st.markdown("""
             <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid #EF4444; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;">
-                <span style="color: #F87171; font-weight: 700; font-size: 15px;">🔴 CHƯA KẾT NỐI ĐƯỢC VỚI MICROSOFT EDGE DEBUG</span>
-                <div style="color: #CBD5E1; font-size: 13px; margin-top: 4px;">• Lỗi: <code>{err}</code></div>
-                <div style="color: #94A3B8; font-size: 13px; margin-top: 4px;">• Cách khắc phục: Chạy file <code>f:\\AI\\MCP\\start_edge_debug.bat</code> và mở tab Gemini (model 4 Argon).</div>
+                <span style="color: #F87171; font-weight: 700; font-size: 15px;">⚠️ CHƯA CUNG CẤP GOOGLE GENAI API KEY</span>
+                <div style="color: #CBD5E1; font-size: 13px; margin-top: 4px;">Vui lòng nhập API Key ở thanh bên (sidebar) bên trái để kích hoạt Cloud Mode.</div>
             </div>
             """, unsafe_allow_html=True)
-
-    with col_stat2:
-        if st.button("🔄 Kiểm Tra Kết Nối", key="btn_check_cdp_argon", use_container_width=True):
-            st.rerun()
 
     # Form nhập mã phân tích
     col_arg1, col_arg2, col_arg3 = st.columns([1.2, 1.8, 1.0])
@@ -467,13 +505,16 @@ with tab_argon:
     with col_arg3:
         st.write("")
         st.write("")
-        ask_argon_btn = st.button("⚡ Hỏi Gemini 4", key="btn_ask_argon_main", type="primary", use_container_width=True)
+        ask_argon_btn = st.button("⚡ Phân Tích Ngay", key="btn_ask_argon_main", type="primary", use_container_width=True)
 
     if ask_argon_btn:
-        if not cdp_status.get("available") or not cdp_status.get("tab_found"):
-            st.error("⚠️ Vui lòng mở Microsoft Edge với file `start_edge_debug.bat` và tab Gemini trước khi gửi câu hỏi!")
+        is_cdp_mode = "Edge CDP Bridge" in ai_mode
+        if is_cdp_mode and (not cdp_status.get("available") or not cdp_status.get("tab_found")):
+            st.error("⚠️ Không thể kết nối với Edge CDP trên máy tính của bạn. Bạn hãy chuyển sang chế độ '☁️ Cloud Mode' ở trên để phân tích qua API Key!")
+        elif not is_cdp_mode and not api_key_input:
+            st.error("⚠️ Vui lòng nhập Google GenAI API Key ở thanh bên (sidebar) để chạy Cloud Mode!")
         else:
-            with st.spinner(f"Đang trích xuất dữ liệu nến, volume, chỉ báo của {argon_ticker} và chuyển sang Gemini 4 Argon..."):
+            with st.spinner(f"Đang trích xuất dữ liệu nến, volume, chỉ báo của {argon_ticker} và phân tích chiến lược ATC..."):
                 df_stock = load_historical_data(argon_ticker, months=6)
                 if df_stock.empty:
                     st.error(f"Không thể tải dữ liệu nến cho mã {argon_ticker}.")
@@ -497,16 +538,16 @@ with tab_argon:
                     vni_status = "UPTREND (TRÊN MA50)" if vni_val > vni_ma50 else "DOWNTREND/SIDEWAY"
                     
                     prompt = (
-                        f"=== [PERSONA: SENIOR QUANTITATIVE TRADING STRATEGIST (GEMINI 4 ARGON PRO)] ===\n"
-                        f"Bạn là Giám đốc Chiến lược Giao dịch Định lượng Chứng khoán Việt Nam.\n\n"
+                        f"=== [PERSONA: SENIOR QUANTITATIVE TRADING STRATEGIST] ===\n"
+                        f"Bạn là Giám đốc Chiến lược Giao dịch Định lượng Chứng khoán Việt Nam (am hiểu quy tắc T+2.5 và phiên ATC).\n\n"
                         f"### DỮ LIỆU CỔ PHIẾU {argon_ticker} TẠI THỜI ĐIỂM CẬN PHIÊN ATC:\n"
                         f"- Thị trường chung VN-INDEX: {vni_val:,.1f} | MA50: {vni_ma50:,.1f} ({vni_status})\n"
                         f"- Giá đóng cửa hiện tại: {close_val:,.0f} ₫ (Biên độ nến: High {high_val:,.0f} - Low {low_val:,.0f})\n"
-                        f"- Close Location Value (CLV): {clv:.2f} (Tỷ lệ đóng nến trong biên độ)\n"
+                        f"- Close Location Value (CLV): {clv:.2f} (Tỷ lệ đóng nến trong biên độ ngày: CLV>0.7 là lực mua áp đảo, CLV<0.4 là nến bị bán dội ngược)\n"
                         f"- Volume nến hiện tại so với MA20 Volume: {vol_ratio:.1f}x\n"
                         f"- RSI(14): {float(latest.get('rsi', 50)):.1f} | MACD Hist: {float(latest.get('macd_hist', 0)):.2f}\n"
                         f"- Chỉ số cơ bản: P/E={fa.get('PE', 'N/A')} | ROE={fa.get('ROE', 0)*100 if isinstance(fa.get('ROE'), (int, float)) else 'N/A'}%\n"
-                        f"- Các khía cạnh người dùng quan tâm: {', '.join(argon_focus)}\n\n"
+                        f"- Các khía cạnh trọng tâm: {', '.join(argon_focus)}\n\n"
                         f"### YÊU CẦU THỰC HIỆN:\n"
                         f"1. Phân tích giải phẫu cây nến hôm nay: Có hiện tượng rút chân thật hay bẫy Bull-trap xả hàng cận ATC?\n"
                         f"2. Đánh giá xác suất thành công hàng về T+2.5.\n"
@@ -515,16 +556,22 @@ with tab_argon:
                         f"Hãy trình bày trực diện, chuyên nghiệp, có cấu trúc bullet point rõ ràng."
                     )
                     
-                    success, verdict = ask_gemini_4_argon_sync(prompt, timeout_sec=65)
+                    if is_cdp_mode:
+                        success, verdict = ask_gemini_4_argon_sync(prompt, timeout_sec=65, base_url=custom_endpoint)
+                    else:
+                        success, verdict = ask_gemini_via_api(prompt, api_key=api_key_input)
+                        
                     if success:
                         st.session_state.last_argon_verdict = verdict
                         st.session_state.last_argon_ticker = argon_ticker
+                        st.session_state.last_argon_mode = ai_mode
                     else:
-                        st.error(f"❌ Không thể nhận phản hồi từ Gemini 4: {verdict}")
+                        st.error(f"❌ Không thể nhận phản hồi từ AI: {verdict}")
 
     if "last_argon_verdict" in st.session_state and st.session_state.last_argon_verdict:
         st.markdown("---")
-        st.markdown(f"#### 🧠 Bản Đánh Giá Chiến Lược Chuyên Sâu: **{st.session_state.last_argon_ticker}** (Bởi Gemini 4 Argon Pro)")
+        mode_label = st.session_state.get('last_argon_mode', ai_mode)
+        st.markdown(f"#### 🧠 Bản Đánh Giá Chiến Lược Chuyên Sâu: **{st.session_state.last_argon_ticker}** ({mode_label})")
         st.markdown(f"""
         <div class="fintech-card" style="border-left: 4px solid #38BDF8; line-height: 1.8;">
         {st.session_state.last_argon_verdict}

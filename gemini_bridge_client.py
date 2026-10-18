@@ -1,10 +1,11 @@
 """
 gemini_bridge_client.py
 Module kết nối trực tiếp giữa VN-Stock Quant và Gemini 4 Argon Pro
-trên Microsoft Edge thông qua Chrome DevTools Protocol (CDP).
+trên Microsoft Edge thông qua Chrome DevTools Protocol (CDP) hoặc Fallback qua Google GenAI API.
 Hỗ trợ cơ chế Dual-Stage Alert lúc 14:25 - 14:30 và chức năng AI Second Opinion trên Dashboard.
 """
 
+import os
 import sys
 import json
 import time
@@ -12,6 +13,7 @@ import asyncio
 import logging
 import requests
 import websockets
+from urllib.parse import urlparse
 
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -21,15 +23,16 @@ if hasattr(sys.stdout, "reconfigure"):
 
 logger = logging.getLogger("GeminiBridge")
 
-CDP_BASE_URL = "http://127.0.0.1:9222"
+DEFAULT_CDP_BASE_URL = os.environ.get("CDP_BRIDGE_URL", "http://127.0.0.1:9222")
 
-def is_edge_cdp_available() -> dict:
+def is_edge_cdp_available(base_url: str = None) -> dict:
     """
-    Kiểm tra trạng thái kết nối tới Microsoft Edge Debugging (Port 9222).
-    Trả về dict: {"available": bool, "tab_found": bool, "model": str, "error": str}
+    Kiểm tra trạng thái kết nối tới Microsoft Edge Debugging (Port 9222 hoặc Tunnel).
+    Trả về dict: {"available": bool, "tab_found": bool, "model": str, "error": str, "ws_url": str}
     """
+    url = (base_url or DEFAULT_CDP_BASE_URL).rstrip("/")
     try:
-        resp = requests.get(f"{CDP_BASE_URL}/json", timeout=2)
+        resp = requests.get(f"{url}/json", timeout=2.5)
         if resp.status_code != 200:
             return {"available": False, "tab_found": False, "model": "", "error": f"HTTP status {resp.status_code}"}
         tabs = resp.json()
@@ -37,13 +40,22 @@ def is_edge_cdp_available() -> dict:
         if not gem_tabs:
             return {"available": True, "tab_found": False, "model": "", "error": "Chưa mở tab gemini.google.com trên Edge"}
         
-        return {"available": True, "tab_found": True, "model": "Argon", "ws_url": gem_tabs[0].get('webSocketDebuggerUrl')}
+        ws_url = gem_tabs[0].get('webSocketDebuggerUrl')
+        
+        # Nếu dùng Tunnel từ xa (ngrok, cloudflared, localtunnel), rewrite ws_url cho đúng host
+        if ws_url and not url.startswith("http://127.0.0.1") and not url.startswith("http://localhost"):
+            parsed_base = urlparse(url)
+            parsed_ws = urlparse(ws_url)
+            scheme = "wss" if parsed_base.scheme == "https" else "ws"
+            ws_url = f"{scheme}://{parsed_base.netloc}{parsed_ws.path}"
+            
+        return {"available": True, "tab_found": True, "model": "Argon", "ws_url": ws_url}
     except Exception as e:
         return {"available": False, "tab_found": False, "model": "", "error": str(e)}
 
-async def _send_to_gemini_async(prompt: str, timeout_sec: int = 65) -> tuple[bool, str]:
+async def _send_to_gemini_async(prompt: str, timeout_sec: int = 65, base_url: str = None) -> tuple[bool, str]:
     """Hàm bất đồng bộ gửi prompt tới Gemini 4 Argon qua WebSocket CDP."""
-    status = is_edge_cdp_available()
+    status = is_edge_cdp_available(base_url)
     if not status.get("available") or not status.get("tab_found"):
         return False, f"Lỗi kết nối Edge CDP: {status.get('error', 'Edge chưa mở cổng 9222 hoặc thiếu tab Gemini')}"
         
@@ -134,7 +146,6 @@ async def _send_to_gemini_async(prompt: str, timeout_sec: int = 65) -> tuple[boo
             last_len = 0
             stable_cycles = 0
             
-            # Đợi 2s đầu tiên để Gemini bắt đầu sinh câu trả lời
             await asyncio.sleep(2)
             
             while time.time() - start_time < timeout_sec:
@@ -155,7 +166,6 @@ async def _send_to_gemini_async(prompt: str, timeout_sec: int = 65) -> tuple[boo
                 is_gen = res.get('isGen', False)
                 elapsed = int(time.time() - start_time)
                 
-                # Nếu đã xuất hiện response mới và có văn bản
                 if cur_count > initial_count and cur_len > 100:
                     if cur_len == last_len and not is_gen:
                         stable_cycles += 1
@@ -163,14 +173,12 @@ async def _send_to_gemini_async(prompt: str, timeout_sec: int = 65) -> tuple[boo
                         stable_cycles = 0
                     last_len = cur_len
                     
-                    # 2 chu kỳ liên tiếp độ dài không đổi và nút Stop biến mất -> Hoàn tất
                     if stable_cycles >= 2:
                         ans = res.get('text', '')
                         if ans.startswith('Gemini said'):
                             ans = ans[len('Gemini said'):].strip()
                         return True, ans
 
-            # Nếu timeout nhưng đã nhận được phần lớn văn bản
             if last_len > 150:
                 logger.warning(f"Chạm ngưỡng timeout ({timeout_sec}s), trả về văn bản hiện có ({last_len} ký tự).")
                 ans = res.get('text', '')
@@ -183,7 +191,7 @@ async def _send_to_gemini_async(prompt: str, timeout_sec: int = 65) -> tuple[boo
         logger.error(f"Lỗi WebSocket giao tiếp với Edge CDP: {e}")
         return False, f"Lỗi WebSocket CDP: {str(e)}"
 
-def ask_gemini_4_argon_sync(prompt: str, timeout_sec: int = 65) -> tuple[bool, str]:
+def ask_gemini_4_argon_sync(prompt: str, timeout_sec: int = 65, base_url: str = None) -> tuple[bool, str]:
     """Hàm đồng bộ gọi Gemini 4 Argon để tích hợp vào các script thông thường."""
     try:
         loop = asyncio.get_event_loop()
@@ -194,9 +202,39 @@ def ask_gemini_4_argon_sync(prompt: str, timeout_sec: int = 65) -> tuple[bool, s
     if loop.is_running():
         import nest_asyncio
         nest_asyncio.apply()
-        return loop.run_until_complete(_send_to_gemini_async(prompt, timeout_sec))
+        return loop.run_until_complete(_send_to_gemini_async(prompt, timeout_sec, base_url))
     else:
-        return loop.run_until_complete(_send_to_gemini_async(prompt, timeout_sec))
+        return loop.run_until_complete(_send_to_gemini_async(prompt, timeout_sec, base_url))
+
+def ask_gemini_via_api(prompt: str, api_key: str = None) -> tuple[bool, str]:
+    """
+    Fallback Cloud Mode: Gọi Gemini API trực tiếp bằng Google GenAI API Key.
+    Phù hợp khi chạy trên Streamlit Cloud (khi máy chủ không ở cùng localhost với trình duyệt Edge).
+    """
+    key = api_key or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    if not key:
+        return False, "Chưa cung cấp Google GenAI API Key để chạy Cloud Mode."
+
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=key)
+        
+        # Thử lần lượt các model phổ biến
+        models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+        for m_name in models:
+            try:
+                model = genai.GenerativeModel(m_name)
+                resp = model.generate_content(prompt)
+                if resp and resp.text:
+                    return True, resp.text
+            except Exception as e:
+                logger.warning(f"Model {m_name} không khả dụng: {e}")
+                continue
+                
+        return False, "Không thể tạo phản hồi từ các model Gemini API."
+    except Exception as e:
+        logger.error(f"Lỗi khi gọi Gemini API: {e}")
+        return False, f"Lỗi Gemini API: {str(e)}"
 
 def format_candidates_payload(candidates: list, vnindex_val: float, vnindex_ma50: float, market_status: str) -> str:
     """Format danh sách các mã tiềm năng thành Payload Markdown chuẩn nén cho Gemini 4 Argon."""
